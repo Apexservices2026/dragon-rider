@@ -1,0 +1,19 @@
+# Unreal Engine generated files
+Binaries/
+DerivedDataCache/
+Intermediate/
+Saved/
+.vs/
+*.sln
+*.suo
+*.VC.db
+*.VC.VC.opendb
+
+# Operating system and editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Unreal per-user editor preferences
+**/Config/DefaultEditorPerProjectUserSettings.ini
