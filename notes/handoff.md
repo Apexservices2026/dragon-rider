@@ -134,4 +134,25 @@ The default map is now `/Game/DragonRider/Archipelago/Lvl_Archipelago` (World Pa
 - **Sea**: 60 km plane + 400 km far-ocean skirt (no collision) to fix the white horizon band.
 - **Build**: `build_archipelago.py` must run with `-AllowCommandletRendering` (landscape heights are a GPU merge of the edit layer). It then checks 300 random points per landscape against its heightmap and logs `verify <island>`.
 - **Review**: `tools/Review-Archipelago.ps1`; the route is the `ReviewLeg:<n>` markers placed by `build_archipelago.py` and `place_archipelago.py` (the pawn reads them in `-DragonShots` mode). Legs teleport without a sweep, so a leg placed inside a mountain flies through it unseen; keep leg points over the sea or well above the ground.
-- **Weak / next**: no foliage or Megascans yet (flat colour, visible noise pattern up close); glacier isle valleys are comb-like; forest cliffs are rounded; the waterfall is only a marked gorge (no water); no HLODs (all landscape proxies always loaded); Nanite landscape off; frame rate not measured.
+- **Weak / next**: no foliage or Megascans yet (flat colour, visible noise pattern up close); glacier isle valleys are comb-like; forest cliffs are rounded; the waterfall gorge was empty here (now filled, see the landmarks checkpoint); no HLODs (all landscape proxies always loaded); Nanite landscape off; frame rate not measured.
+
+## Landmarks checkpoint — November 18, 2026 (commit cf3e12f)
+
+- Vertex's landmark kit (`tools/blender/world/build_landmarks.py`, all procedural, own scripts) is imported by `tools/import_landmarks.py` into `/Game/DragonRider/World/Landmarks` (about 53 MB, tracked in LFS). `tools/place_landmarks.py` places it into `Lvl_Archipelago`, with sites chosen by `tools/terrain/pick_landmark_sites.py` and `tools/archipelago_heights.py`. The placement only adds and removes its own actors and never rebuilds the landscapes.
+- What's placed:
+  - Forest isle: a ring-fort with gatehouse and mead hall on a hilltop, and a waterfall in the gorge.
+  - Glacier isle: a rune circle and an ice shrine.
+  - Ember caldera: the dragon lair. The lava lake now has a soft crust edge.
+  - All coasts: wrecks, beacons and driftwood.
+- Fleet fix: the ships' shore check now ignores the sea planes; it had been hitting the far-ocean skirt. Each ship returns to the start of its route.
+- Forest village moved to flatter ground; the worst burial is now 0.86 m.
+- The archipelago level is git-ignored (owner's choice, to save LFS storage). Rebuild it after a clone with README steps 0, 5 and 6. GitHub LFS use is about 775 MB of a 1 GB free quota, so check before large uploads.
+- Weak / next:
+  - Fort walls and the gatehouse sink up to 4.5 m.
+  - The lair reads small from the air and the skull reads pale.
+  - The ice shrine sits on a summit.
+  - Stair-stepped beaches on the main island.
+  - The waterfall is one flat sheet.
+  - Landmark textures are 2048 px (halving them saves about 25 MB).
+  - Frame rate not measured.
+- Compliance (Sentinel): the DEM credit now uses the licence's exact Art. 6(b) text plus the liability and non-endorsement lines. Imported textures embed the local import path; the fix is pending.

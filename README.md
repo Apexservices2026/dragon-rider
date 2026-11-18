@@ -19,7 +19,7 @@ An Unreal Engine 5.8 Viking fantasy action-adventure where dragon flight is the 
 3. Open `Game/DragonRider/DragonRider.uproject`. Unreal will offer to build the C++ module; say yes. Select your UE 5.8 install if it asks.
 4. The editor opens on `Lvl_Archipelago`. Press Play.
 
-**The archipelago level is not in Git** (its terrain files are about 200 MB and would use up the free Git LFS storage). After a fresh clone, build it once with steps 0 and 5 under "Rebuilding generated content" below (about 15 minutes, needs the DEM tiles). Until then, play `Lvl_Opening`.
+**The archipelago level is not in Git** (its terrain files are about 200 MB and would use up the free Git LFS storage). After a fresh clone, build it once with steps 0, 5 and 6 under "Rebuilding generated content" below (about 15 minutes, needs the DEM tiles). Until then, play `Lvl_Opening`.
 
 There are also two scripts:
 - `tools/Play-DragonRider.ps1` launches the game in a window without the editor.
@@ -37,9 +37,9 @@ UnrealEditor-Cmd.exe <uproject> -run=pythonscript -script=<script>
 
 Git Bash mangles `/Game/...` paths, so don't run these from Git Bash.
 
-0. **Archipelago terrain** (system Python with numpy; `tifffile` for the real elevation data):
+0. **Archipelago terrain** (system Python with numpy; `tifffile` and `imagecodecs` for the real elevation data. All three are BSD-3 licensed and only used by these local tools):
    `python -I tools/terrain/gen_archipelago.py` (about 7 minutes). It writes heightmaps and `archipelago.json` to `Game/DragonRider/Saved/Generated/Archipelago/`.
-   - The main island uses the Copernicus GLO-30 DEM tiles in `Saved/Generated/DEM/` (`--dem <tif> ...` for other tiles, `--no-dem` for a procedural placeholder). The crop is set by `DEM_CENTRE` / `DEM_SIZE_M` in the script.
+   - The main island uses the Copernicus GLO-30 DEM tiles `Copernicus_DSM_COG_10_N61_00_E006_00_DEM.tif` and `..._N61_00_E007_00_DEM.tif`. They are not in Git. Download them from the Copernicus Data Space Ecosystem (dataspace.copernicus.eu, collection COP-DEM GLO-30) or its public COG mirror, accept the COP-DEM GLO-30 licence, and put them in `Saved/Generated/DEM/`. Credit is in `NOTICES.md`. The script reads them from there (`--dem <tif> ...` for other tiles, `--no-dem` for a procedural placeholder). The crop is set by `DEM_CENTRE` / `DEM_SIZE_M` in the script.
    - `--quick` makes a fast preview; `--only forest,ember` rebuilds some islands and keeps the rest.
 1. **Blender** (headless, `blender -b -P <script>`):
    - `tools/blender/gen_fjord_terrain.py`: terrain FBX.
