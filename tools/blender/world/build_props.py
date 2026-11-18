@@ -309,7 +309,12 @@ MANIFEST["glb_note"] = ("All prop roots sit at the origin (named nodes) - instan
                         "1024 px JPEG copies of the PNGs.")
 MANIFEST["fbx_export_settings"] = {k: (sorted(v) if isinstance(v, set) else v) for k, v in FBX_SETTINGS.items()}
 MANIFEST["outside_assets"] = "none - all geometry and textures generated procedurally by tools/blender/world/*.py"
-with open(os.path.join(OUT, "props_manifest.json"), "w") as f:
+_mp = os.path.join(OUT, "props_manifest.json")
+if os.path.exists(_mp):   # keep sections written by other builders (build_landmarks.py)
+    _old = json.load(open(_mp))
+    for _k, _v in _old.items():
+        MANIFEST.setdefault(_k, _v)
+with open(_mp, "w") as f:
     json.dump(MANIFEST, f, indent=1)
 print("TRIS longship hull", tri_hull, "sail", tri_sail, "oar", tri_oar, "assembled", ship_total)
 print(f"ALL DONE {time.time() - T0:.1f}s glb {MANIFEST['glb_size_mb']} MB")

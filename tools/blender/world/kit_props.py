@@ -247,7 +247,7 @@ def build_longship():
     return mb
 
 
-def build_dragon_head(mb, base, pitch=-6.0):
+def build_dragon_head(mb, base, pitch=-6.0, eyes=True):
     """Carved dragon head on the stem. Local frame: +X snout, +Z up; base at the neck end."""
     R = Matrix.Rotation(math.radians(pitch), 3, "Y")
 
@@ -309,7 +309,8 @@ def build_dragon_head(mb, base, pitch=-6.0):
             side=(0, 1, 0), cap1=True)
     # eyes + brows
     for sgn in (1, -1):
-        mb.sphere(W((0.27, sgn * 0.155, 0.12)), 0.055, "M_Wood", seg=8, rings=5, scale=(1.3, 0.85, 1.0))
+        if eyes:
+            mb.sphere(W((0.27, sgn * 0.155, 0.12)), 0.055, "M_Wood", seg=8, rings=5, scale=(1.3, 0.85, 1.0))
         mb.tube([W((0.14, sgn * 0.14, 0.18)), W((0.27, sgn * 0.175, 0.215)), W((0.4, sgn * 0.15, 0.17))],
                 ellipse(6), [0.03, 0.034, 0.022], "M_WoodTar", side=(0, 1, 0), cap0=True, cap1=True)
     # curled horns

@@ -14,7 +14,9 @@ from mathutils import Matrix, Vector
 
 # metres covered by one UV unit, per kit material (must match texture authoring)
 TEX_M = {"M_Wood": 2.0, "M_WoodTar": 2.0, "M_Turf": 4.0, "M_Iron": 1.0, "M_Stone": 2.0,
-         "M_Shields": 1.0, "M_Sail": 1.0, "M_Banner": 1.0}
+         "M_Shields": 1.0, "M_Sail": 1.0, "M_Banner": 1.0,
+         "M_Shingle": 2.0, "M_Rock": 4.0, "M_RockFrost": 4.0, "M_LavaRock": 2.0, "M_Obsidian": 2.0, "M_Bone": 1.0,
+         "M_Charred": 2.0, "M_Ice": 2.0, "M_Crystal": 1.0, "M_Runes": 1.0, "M_Waterfall": 4.0, "M_Foam": 1.0}
 
 rng = random.Random(4242)
 
@@ -66,6 +68,42 @@ class MB:
         self.UV.append(uvs)
         self.M.append(self.mi(mat))
         self.S.append(smooth)
+
+    def poly(self, verts, faces, mat, smooth=True, uv_scale=None, off=None):
+        """Add an arbitrary polygon mesh with per-face box-projected UVs.
+        mat: material name or callable(normal, centre) -> name."""
+        o = ruv() if off is None else off
+        base = len(self.V)
+        for p in verts:
+            self.v(p)
+        for f in faces:
+            pts = [Vector(verts[i]) for i in f]
+            n = Vector((0, 0, 0))
+            for k in range(len(pts)):
+                a, b = pts[k], pts[(k + 1) % len(pts)]
+                n += Vector(((a.y - b.y) * (a.z + b.z), (a.z - b.z) * (a.x + b.x), (a.x - b.x) * (a.y + b.y)))
+            if n.length > 0:
+                n.normalize()
+            c = sum(pts, Vector()) / len(pts)
+            mname = mat(n, c) if callable(mat) else mat
+            m = TEX_M.get(mname, 1.0) if uv_scale is None else uv_scale
+            ax = max(range(3), key=lambda k: abs(n[k]))
+            ua, va = [(1, 2), (0, 2), (0, 1)][ax]
+            uvs = [(p[ua] / m + o[0], p[va] / m + o[1]) for p in pts]
+            self.F.append([base + i for i in f])
+            self.UV.append(uvs)
+            self.M.append(self.mi(mname))
+            self.S.append(smooth)
+
+    def remap(self, mapping):
+        """Rename materials (merging duplicates) e.g. {'M_Wood': 'M_Bone'}."""
+        names = [mapping.get(m, m) for m in self.mats]
+        new = []
+        for nm in names:
+            if nm not in new:
+                new.append(nm)
+        self.M = [new.index(names[i]) for i in self.M]
+        self.mats = new
 
     def tri_count(self):
         return sum(len(f) - 2 for f in self.F)
