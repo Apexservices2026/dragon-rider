@@ -122,3 +122,16 @@ Claude is now in charge of the project. ChatGPT/Codex may occasionally help with
   - Ships have no collision.
   - The first village is hard to see from the start.
 - Not tested: hands-on feel, gamepad, frame rate.
+
+## Forge checkpoint: archipelago — November 18, 2026
+
+The default map is now `/Game/DragonRider/Archipelago/Lvl_Archipelago` (World Partition). `Lvl_Opening` and its scripts are unchanged. The archipelago level itself (`Content/DragonRider/Archipelago/` and its `__ExternalActors__` / `__ExternalObjects__` folders, about 211 MB) is git-ignored by the owner's choice (2026-11-18) to save Git LFS storage; rebuild it locally with `gen_archipelago.py` + `build_archipelago.py`. Only scripts and code go to GitHub.
+
+- **Terrain generator** `tools/terrain/` (system Python + numpy, no scipy): `gen_archipelago.py` (recipes, layout), `terrain_lib.py` (noise, stream-power hydraulic erosion with uplift + hillslope diffusion on a stochastic D8 network, thermal talus, chamfer distance fields), `dem_import.py` (GeoTIFF -> metre grid -> sea shelf -> drowned-edge island), `png16.py`. Output: `Saved/Generated/Archipelago/*.r16|png` + `archipelago.json` (placement, landscape scale, POIs, start, fleet routes).
+- **Main island**: Copernicus GLO-30, Fjærlandsfjorden. Crop centre 6.73 E 61.39 N, 14.1 km square (6.598–6.862 E, 61.327–61.453 N; only the E006 tile is used), heights x1.1, 3.5 m/px. The window edges are drowned along the real valleys (ria coast).
+- **Landscapes**: one per island + three 1 km skerry tiles, created by the editor-only C++ module `DragonRiderEditor` (`UDragonLandscapeLibrary::ImportHeightmapLandscape`, wraps `ALandscape::Import` + `ChangeGridSize`). Streaming proxies are always loaded for now (no HLODs yet).
+- **Material** `M_ArchipelagoLand` + `MI_Land_*`: auto height/slope/noise layers, texture parameters ready for Megascans (`UseTextures`, `T_<Layer>_Albedo/Normal`, `<Layer>TileCm`).
+- **Sea**: 60 km plane + 400 km far-ocean skirt (no collision) to fix the white horizon band.
+- **Build**: `build_archipelago.py` must run with `-AllowCommandletRendering` (landscape heights are a GPU merge of the edit layer). It then checks 300 random points per landscape against its heightmap and logs `verify <island>`.
+- **Review**: `tools/Review-Archipelago.ps1`; the route is the `ReviewLeg:<n>` markers placed by `build_archipelago.py` and `place_archipelago.py` (the pawn reads them in `-DragonShots` mode). Legs teleport without a sweep, so a leg placed inside a mountain flies through it unseen; keep leg points over the sea or well above the ground.
+- **Weak / next**: no foliage or Megascans yet (flat colour, visible noise pattern up close); glacier isle valleys are comb-like; forest cliffs are rounded; the waterfall is only a marked gorge (no water); no HLODs (all landscape proxies always loaded); Nanite landscape off; frame rate not measured.

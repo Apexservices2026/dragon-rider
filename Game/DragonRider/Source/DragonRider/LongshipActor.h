@@ -35,6 +35,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Longship") float StrokePeriod = 2.8f;
 	/** How far back along its track (cm) the ship jumps when it nears land. */
 	UPROPERTY(EditAnywhere, Category = "Longship") float LoopDistance = 520000.f;
+	/** true: when it nears land, return to where it started (a route between two islands) instead of jumping back LoopDistance. */
+	UPROPERTY(EditAnywhere, Category = "Longship") bool bReturnToStart = false;
 	/** Look-ahead (cm) for the "near land" check. */
 	UPROPERTY(EditAnywhere, Category = "Longship") float LandCheckAhead = 9000.f;
 	UPROPERTY(EditAnywhere, Category = "Longship") float BobHeight = 22.f;
@@ -75,4 +77,5 @@ private:
 	float WakeTimer = 0.f;
 	float LandCheckTimer = 0.f;
 	int32 NextWake = 0;
+	FVector StartLocation = FVector::ZeroVector;
 };

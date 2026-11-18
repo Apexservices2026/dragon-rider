@@ -245,6 +245,7 @@ void ADragonFlightPawn::BeginPlay()
 	Stamina = MaxStamina;
 	bReviewMode = FParse::Param(FCommandLine::Get(), TEXT("DragonShots"));
 	FindWorldWaterAndFog();
+	if (bReviewMode) { CollectReviewLegs(); }
 }
 
 void ADragonFlightPawn::SetupRiggedDragon()
@@ -405,8 +406,133 @@ void ADragonFlightPawn::ExitWater()
 	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW burst after %.2fs speed=%.0fkmh"), UnderwaterTime, GetSpeedKmh());
 }
 
+bool ADragonFlightPawn::CollectReviewLegs()
+{
+	ReviewLegs.Reset();
+	TArray<TPair<int32, FReviewLeg>> Found;
+	for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+	{
+		int32 Index = INDEX_NONE;
+		FReviewLeg Leg;
+		for (const FName& TagName : It->Tags)
+		{
+			FString Key, Value;
+			const FString Tag = TagName.ToString();
+			if (!Tag.Split(TEXT(":"), &Key, &Value)) { Key = Tag; }
+			TArray<FString> Parts;
+			Value.ParseIntoArray(Parts, Key == TEXT("Shots") ? TEXT("|") : TEXT(","));
+			if (Key == TEXT("ReviewLeg")) { Index = FCString::Atoi(*Value); }
+			else if (Key == TEXT("Dur")) { Leg.Duration = FCString::Atof(*Value); }
+			else if (Key == TEXT("Pitch")) { Leg.Pitch = FCString::Atof(*Value); }
+			else if (Key == TEXT("Speed")) { Leg.SpeedKmh = FCString::Atof(*Value); }
+			else if (Key == TEXT("Dive")) { Leg.DiveAt = FCString::Atof(*Value); }
+			else if (Key == TEXT("Boost")) { Leg.bBoost = true; }
+			else if (Key == TEXT("Name")) { Leg.Name = Value.Replace(TEXT("_"), TEXT(" ")); }
+			else if (Key == TEXT("Shots")) { for (const FString& P : Parts) { Leg.Shots.Add(FCString::Atof(*P)); } }
+			else if (Key == TEXT("Orbit") && Parts.Num() == 2) { Leg.bOrbit = true; Leg.OrbitYaw = FCString::Atof(*Parts[0]); Leg.OrbitPitch = FCString::Atof(*Parts[1]); }
+			else if (Key == TEXT("FollowShip") && Parts.Num() == 3) { Leg.bFollowShip = true; Leg.FollowOffset = FVector(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2])); }
+			else if (Key == TEXT("AimAt") && Parts.Num() == 3) { Leg.bAimAt = true; Leg.AimAt = FVector(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2])); }
+		}
+		if (Index != INDEX_NONE)
+		{
+			Leg.Location = It->GetActorLocation();
+			Leg.Rotation = It->GetActorRotation();
+			Found.Add(TPair<int32, FReviewLeg>(Index, Leg));
+		}
+	}
+	Found.Sort([](const TPair<int32, FReviewLeg>& A, const TPair<int32, FReviewLeg>& B) { return A.Key < B.Key; });
+	for (const TPair<int32, FReviewLeg>& P : Found) { ReviewLegs.Add(P.Value); }
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW legs=%d"), ReviewLegs.Num());
+	return ReviewLegs.Num() > 0;
+}
+
+void ADragonFlightPawn::StartReviewLeg(int32 Index)
+{
+	ReviewLeg = Index;
+	ReviewLegTime = 0.f;
+	ReviewLegShot = 0;
+	if (!ReviewLegs.IsValidIndex(Index)) { return; }
+	FReviewLeg& L = ReviewLegs[Index];
+	if (L.bFollowShip)
+	{
+		const ALongshipActor* Best = nullptr;
+		for (TActorIterator<ALongshipActor> It(GetWorld()); It; ++It)
+		{
+			if (It->SailSpeed > 1.f && (!Best || FVector::DistSquared(It->GetActorLocation(), L.Location) < FVector::DistSquared(Best->GetActorLocation(), L.Location))) { Best = *It; }
+		}
+		if (Best)
+		{
+			const FVector Fwd = FVector(Best->GetActorForwardVector().X, Best->GetActorForwardVector().Y, 0.f).GetSafeNormal();
+			const FVector Right(-Fwd.Y, Fwd.X, 0.f);
+			L.Location = Best->GetActorLocation() - Fwd * L.FollowOffset.X + Right * L.FollowOffset.Y + FVector(0.f, 0.f, L.FollowOffset.Z);
+			L.AimAt = Best->GetActorLocation() + Fwd * 1500.f;
+			L.bAimAt = true;
+		}
+	}
+	if (bUnderwater) { bUnderwater = false; bBurstRising = false; }
+	if (bDiveHeld) { OnDiveStop(FInputActionValue()); }
+	SetActorLocation(L.Location);
+	FRotator R = L.Rotation;
+	if (L.bAimAt) { R = (L.AimAt - L.Location).Rotation(); }
+	FlightYaw = R.Yaw; FlightPitch = FMath::Clamp(FRotator::NormalizeAxis(R.Pitch), -30.f, 30.f);
+	Speed = L.SpeedKmh > 0.f ? L.SpeedKmh / 0.036f : CruiseSpeed;
+	Bank = 0.f; YawRate = 0.f; VerticalBoost = 0.f; BurstAmount = 0.f; DiveAmount = 0.f; UnderwaterAmount = 0.f; PullOutTime = 0.f;
+	Stamina = MaxStamina;
+	if (WaterComponent) { Collision->IgnoreComponentWhenMoving(WaterComponent, false); }
+	CameraBoom->bDoCollisionTest = true;
+	if (AController* C = GetController()) { C->SetControlRotation(FRotator(L.Pitch, FlightYaw, 0.f)); }
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW leg %d (%s) at %s yaw %.1f"), Index, *L.Name, *L.Location.ToString(), FlightYaw);
+}
+
+void ADragonFlightPawn::UpdateLegReview(float Dt)
+{
+	ReviewTime += Dt;
+	AController* C = GetController();
+	if (!C) { return; }
+	if (ReviewLeg < 0) { StartReviewLeg(0); }
+	if (!ReviewLegs.IsValidIndex(ReviewLeg)) { return; }
+	const FReviewLeg& L = ReviewLegs[ReviewLeg];
+	ReviewLegTime += Dt;
+
+	// Camera: optional fixed orbit around the dragon for beauty shots, otherwise the normal chase camera.
+	if (L.bOrbit)
+	{
+		CameraBoom->SetUsingAbsoluteRotation(true);
+		CameraBoom->bUsePawnControlRotation = false;
+		CameraBoom->SetWorldRotation(FRotator(L.OrbitPitch, FlightYaw + L.OrbitYaw, 0.f));
+	}
+	else if (CameraBoom->IsUsingAbsoluteRotation())
+	{
+		CameraBoom->SetUsingAbsoluteRotation(false);
+		CameraBoom->bUsePawnControlRotation = true;
+	}
+	if (!bDiveHeld && !bUnderwater && PullOutTime <= 0.f)
+	{
+		float AimYaw = L.Rotation.Yaw;
+		if (L.bAimAt) { AimYaw = (L.AimAt - L.Location).Rotation().Yaw; }
+		C->SetControlRotation(FRotator(L.Pitch, AimYaw, 0.f));
+	}
+	if (L.SpeedKmh > 0.f && !bDiveHeld && !bUnderwater && PullOutTime <= 0.f) { Speed = L.SpeedKmh / 0.036f; }
+	bBoosting = L.bBoost && !bDiveHeld && !bUnderwater;
+	Stamina = MaxStamina;
+	if (L.DiveAt >= 0.f && ReviewLegTime >= L.DiveAt && !bDiveHeld && !bUnderwater && ReviewLegTime < L.DiveAt + 0.2f) { OnDiveStart(FInputActionValue()); }
+	if (bDiveHeld && bUnderwater) { OnDiveStop(FInputActionValue()); }
+
+	if (ReviewLegShot < L.Shots.Num() && ReviewLegTime >= L.Shots[ReviewLegShot])
+	{
+		ReviewScreenshot(*FString::Printf(TEXT("%s +%.1fs"), *L.Name, L.Shots[ReviewLegShot]));
+		++ReviewLegShot;
+	}
+	if (ReviewLegTime >= L.Duration)
+	{
+		if (ReviewLeg + 1 < ReviewLegs.Num()) { StartReviewLeg(ReviewLeg + 1); }
+		else if (APlayerController* PC = Cast<APlayerController>(C)) { PC->ConsoleCommand(TEXT("quit")); }
+	}
+}
+
 void ADragonFlightPawn::UpdateReviewMode(float Dt)
 {
+	if (ReviewLegs.Num() > 0) { UpdateLegReview(Dt); return; }
 	ReviewTime += Dt;
 	AController* C = GetController();
 	if (!C) { return; }

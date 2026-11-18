@@ -25,6 +25,11 @@
 			"Name": "DragonRider",
 			"Type": "Runtime",
 			"LoadingPhase": "Default"
+		},
+		{
+			"Name": "DragonRiderEditor",
+			"Type": "Editor",
+			"LoadingPhase": "Default"
 		}
 	]
 }

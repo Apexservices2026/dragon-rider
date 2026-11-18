@@ -8,5 +8,6 @@ public class DragonRiderEditorTarget : TargetRules
 		DefaultBuildSettings = BuildSettingsVersion.Latest;
 		IncludeOrderVersion = EngineIncludeOrderVersion.Latest;
 		ExtraModuleNames.Add("DragonRider");
+		ExtraModuleNames.Add("DragonRiderEditor");
 	}
 }

@@ -113,6 +113,7 @@ void ALongshipActor::ApplyClan()
 void ALongshipActor::BeginPlay()
 {
 	Super::BeginPlay();
+	StartLocation = GetActorLocation();
 	ApplyClan();
 	UE_LOG(LogTemp, Verbose, TEXT("LONGSHIP %s clanB=%d hull=%s sail=%s speed=%.0f"), *GetName(), bClanB ? 1 : 0,
 		*GetNameSafe(Hull->GetStaticMesh()), *GetNameSafe(Sail->GetStaticMesh()), SailSpeed);
@@ -218,7 +219,7 @@ void ALongshipActor::Tick(float DeltaSeconds)
 			if (LandAhead())
 			{
 				// Loop back far out along the track; hide the old wake so it doesn't streak across the sea.
-				SetActorLocation(GetActorLocation() - GetActorForwardVector() * LoopDistance);
+				SetActorLocation(bReturnToStart ? StartLocation : GetActorLocation() - GetActorForwardVector() * LoopDistance);
 				for (FWakeBlob& B : Wake) { B.Age = WakeLife; }
 			}
 		}

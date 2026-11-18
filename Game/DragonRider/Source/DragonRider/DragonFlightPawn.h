@@ -245,6 +245,29 @@ private:
 	int32 ReviewPass = 0; // review-only teleports: 1 = Skerholm, 2 = Innvik, 3 = fleet
 	void ReviewScreenshot(const TCHAR* What);
 
+	// Data-driven review (Lvl_Archipelago): the level holds actors tagged "ReviewLeg:<n>" (tools/build_archipelago.py).
+	// Each leg teleports the dragon to that actor's transform, flies it for Dur seconds and takes shots at the listed
+	// times. Tags: Dur:<s> Shots:<t>|<t> Name:<text> Pitch:<deg> Speed:<km/h> Boost Dive:<t> Orbit:<yaw>,<pitch> AimAt:<x>,<y>,<z>
+	// FollowShip:<back>,<side>,<alt> (cm) starts the leg beside the nearest rowing longship, wherever it has got to.
+	struct FReviewLeg
+	{
+		FVector Location = FVector::ZeroVector;
+		FRotator Rotation = FRotator::ZeroRotator;
+		float Duration = 6.f, Pitch = -4.f, SpeedKmh = 0.f, DiveAt = -1.f, OrbitYaw = 0.f, OrbitPitch = 0.f;
+		bool bBoost = false, bOrbit = false, bAimAt = false, bFollowShip = false;
+		FVector FollowOffset = FVector::ZeroVector;
+		FVector AimAt = FVector::ZeroVector;
+		TArray<float> Shots;
+		FString Name;
+	};
+	TArray<FReviewLeg> ReviewLegs;
+	int32 ReviewLeg = -1;
+	int32 ReviewLegShot = 0;
+	float ReviewLegTime = 0.f;
+	bool CollectReviewLegs();
+	void StartReviewLeg(int32 Index);
+	void UpdateLegReview(float Dt);
+
 	// Animation state
 	float FlapPhase = 0.f;
 	float FlapIntensity = 1.f;
