@@ -17,9 +17,15 @@ An Unreal Engine 5.8 Viking fantasy action-adventure where dragon flight is the 
 1. Install Unreal Engine 5.8, Visual Studio 2026 (C++ game workload) and Git LFS.
 2. Clone this repository and run `git lfs pull`. The default branch is `claude/dragon-flight`.
 3. Open `Game/DragonRider/DragonRider.uproject`. Unreal will offer to build the C++ module; say yes. Select your UE 5.8 install if it asks.
-4. The editor opens on `Lvl_Archipelago`. Press Play.
+4. The editor opens on `Lvl_Archipelago` and you press Play. That level is only there after you build it (see below). On a fresh clone, open `Lvl_Opening` instead.
 
-**The archipelago level is not in Git** (its terrain files are about 200 MB and would use up the free Git LFS storage). After a fresh clone, build it once with steps 0, 5 and 6 under "Rebuilding generated content" below (about 15 minutes, needs the DEM tiles). Until then, play `Lvl_Opening`.
+**The archipelago level is not in Git** (its terrain files are about 200 MB and would use up the free Git LFS storage). After a fresh clone, build it once in this order (about 15 minutes; see "Rebuilding generated content" below):
+   1. Step 0: `gen_archipelago.py`. It needs the DEM tiles.
+   2. `python -I tools/terrain/pick_landmark_sites.py`.
+   3. Step 5: `build_archipelago.py`.
+   4. `place_landmarks.py`.
+
+   The landmark meshes are already in Git, so you can skip `import_landmarks.py`.
 
 There are also two scripts:
 - `tools/Play-DragonRider.ps1` launches the game in a window without the editor.
@@ -52,9 +58,9 @@ Git Bash mangles `/Game/...` paths, so don't run these from Git Bash.
 4. `tools/build_opening_level.py`: rebuilds `/Game/DragonRider/Opening/` (terrain, sky, water, start point), then runs `tools/place_world.py` to place the villages and fleet.
 5. `tools/build_archipelago.py`: rebuilds `/Game/DragonRider/Archipelago/` (World Partition level, one Landscape per island, auto landscape material, sky, sea, start point, review route), then runs `tools/place_archipelago.py` (villages, fleet). It needs the C++ editor module `DragonRiderEditor` built (it creates the landscapes), and the commandlet must be run with `-AllowCommandletRendering` (the landscape heights are merged on the GPU).
 6. Island landmarks (Vertex's kit from `tools/blender/world/build_landmarks.py`):
-   - `tools/import_landmarks.py` imports them into `/Game/DragonRider/World/Landmarks`.
+   - `tools/import_landmarks.py` imports them into `/Game/DragonRider/World/Landmarks`. It needs the Blender output; skip it if the committed meshes are fine.
    - `python -I tools/terrain/pick_landmark_sites.py` picks the sites and writes `Saved/Generated/Archipelago/landmarks.json`.
-   - `tools/place_landmarks.py` places them in `Lvl_Archipelago`. It only adds and removes its own actors; it never rebuilds the landscapes.
+   - `tools/place_landmarks.py` places them in `Lvl_Archipelago`. It only adds and removes its own actors; it never rebuilds the landscapes. Step 5 recreates the level, so run `pick_landmark_sites.py` before step 5 (the forest village uses its sites) and `place_landmarks.py` again after every step-5 rebuild.
 
 Each of these scripts deletes and recreates **only its own folder**.
 

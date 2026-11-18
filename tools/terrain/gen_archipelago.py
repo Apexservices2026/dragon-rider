@@ -446,6 +446,10 @@ def main():
         t = time.time()
         if name == 'main':
             dem = a.dem if a.dem else ([] if a.no_dem else [p for p in DEM_DEFAULT if os.path.exists(p)])
+            if not dem and not a.no_dem:
+                sys.exit('Missing Copernicus DEM tiles in %s:\n  %s\n'
+                         'Download them (see README step 0) or pass --no-dem for the procedural placeholder island.'
+                         % (DEM_DIR, '\n  '.join(os.path.basename(p) for p in DEM_DEFAULT)))
             if dem:
                 h, X, Y, info = recipe_main_dem(px, dx, n_ero, a.quick, dem)
             else:
