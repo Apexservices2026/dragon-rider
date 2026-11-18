@@ -12,13 +12,20 @@ class USkeletalMeshComponent;
 class UInputAction;
 class UInputMappingContext;
 class UMaterialInterface;
+class UPrimitiveComponent;
+class UExponentialHeightFogComponent;
 struct FInputActionValue;
 
 /**
  * Arcade-cinematic dragon. The player aims with the mouse/right stick (the camera),
  * and the dragon smoothly chases that aim, banking into turns. Diving trades
  * altitude for speed, climbing bleeds it off. Shift boosts, Space beats the wings,
- * Q/E barrel-roll. All tuning values are editable in the Blueprint/Details panel.
+ * Q/E barrel-roll. Ctrl/RMB power-dives (wings tucked, gravity-driven speed past the normal cap).
+ * A steep, fast water hit plunges the dragon under the sea; it bursts back out with a speed/lift boost.
+ * All tuning values are editable in the Blueprint/Details panel.
+ *
+ * Animation is driven by plain state values (FlapPhase/FlapIntensity, DiveAmount, UnderwaterAmount,
+ * BurstAmount) so a future rigged model's Anim Blueprint can read the same getters.
  */
 UCLASS()
 class DRAGONRIDER_API ADragonFlightPawn : public APawn
@@ -37,6 +44,17 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetAltitudeMeters() const { return GetActorLocation().Z / 100.f; }
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetStamina01() const { return Stamina / MaxStamina; }
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") bool IsBoosting() const { return bBoosting; }
+	/** 0..1 how far into the power-dive pose/physics the dragon is (wings fully tucked at 1). */
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetDiveAmount() const { return DiveAmount; }
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") bool IsPowerDiving() const { return bDiveHeld && !bUnderwater; }
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") bool IsUnderwater() const { return bUnderwater; }
+	/** 0..1 blend of the underwater (swimming, wings half-tucked) pose. */
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetUnderwaterAmount() const { return UnderwaterAmount; }
+	/** 0..1 spike right after bursting out of the water (wings flung open). */
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetBurstAmount() const { return BurstAmount; }
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetDepthMeters() const { return FMath::Max(0.f, -GetActorLocation().Z / 100.f); }
+	/** 1 = full breath, 0 = forced to the surface. */
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetBreath01() const { return bUnderwater ? FMath::Clamp(1.f - UnderwaterTime / MaxUnderwaterTime, 0.f, 1.f) : 1.f; }
 
 	// --- Flight tuning (cm/s, degrees) ---
 	UPROPERTY(EditAnywhere, Category = "Dragon|Flight") float CruiseSpeed = 4200.f;
@@ -61,12 +79,48 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Dragon|Flight") float BoostDrainPerSecond = 22.f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Flight") float StaminaRegenPerSecond = 14.f;
 
+	// --- Power dive (hold Ctrl / RMB / left trigger) ---
+	/** Nose is pulled toward this pitch while diving, unless the player already aims steeper. */
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PowerDivePitch = -65.f;
+	/** Multiplies DiveAcceleration (gravity pull) at full dive. */
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PowerDiveGravityScale = 4.0f;
+	/** Multiplies SpeedRecovery (drag back toward throttle speed) at full dive. */
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PowerDiveDragScale = 0.12f;
+	/** Speed cap while diving (cm/s). 22200 = ~800 km/h. Speed above MaxSpeed is kept after release and bleeds off. */
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PowerDiveMaxSpeed = 22200.f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PowerDiveSteerScale = 0.6f;
+	/** How fast the wings tuck / the dive blends in (1/s). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PowerDiveBlendRate = 4.f;
+	/** After release the aim eases up to this pitch (unless the player moves the mouse) so the dive slingshots out. */
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PullOutPitch = 12.f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|PowerDive") float PullOutDuration = 1.3f;
+
+	// --- Water plunge / burst ---
+	/** Hitting the water with pitch below this AND speed above PlungeMinSpeed (or while power-diving) plunges under. */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float PlungeMaxPitch = -25.f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float PlungeMinSpeed = 5500.f;
+	/** Underwater speed decays toward UnderwaterSwimSpeed at this rate (1/s). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float UnderwaterDrag = 3.4f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float UnderwaterSwimSpeed = 2600.f;
+	/** Upward acceleration under water (cm/s^2). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float Buoyancy = 2300.f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float MaxUnderwaterTime = 2.5f;
+	/** Speed added on bursting out, and the minimum exit speed (cm/s). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float BurstSpeedGain = 3200.f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float BurstMinSpeed = 9000.f;
+	/** Extra vertical launch velocity on exit (cm/s). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float BurstLift = 6000.f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|Water") float BurstExitPitch = 38.f;
+
 	// --- Camera tuning ---
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float BaseFOV = 78.f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float MaxFOV = 104.f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float BaseArmLength = 1500.f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float SpeedArmExtra = 700.f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float MouseSensitivity = 1.0f;
+	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float PowerDiveFOVExtra = 14.f;
+	/** Arm length multiplier at full dive (pulls the camera in). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float PowerDiveArmScale = 0.78f;
 
 protected:
 	virtual void BeginPlay() override;
@@ -96,6 +150,14 @@ private:
 	void OnBoostStop(const FInputActionValue& Value);
 	void OnWingBeat(const FInputActionValue& Value);
 	void OnRoll(const FInputActionValue& Value);
+	void OnDiveStart(const FInputActionValue& Value);
+	void OnDiveStop(const FInputActionValue& Value);
+
+	void EnterWater(const FVector& ImpactPoint);
+	void ExitWater();
+	bool IsWaterComponent(const UPrimitiveComponent* Comp);
+	void FindWorldWaterAndFog();
+	void UpdateUnderwaterView(float Dt);
 
 	void UpdateFlight(float Dt);
 	void UpdateAnimation(float Dt);
@@ -108,6 +170,7 @@ private:
 	UPROPERTY() TObjectPtr<UInputAction> BoostAction;
 	UPROPERTY() TObjectPtr<UInputAction> WingBeatAction;
 	UPROPERTY() TObjectPtr<UInputAction> RollAction;
+	UPROPERTY() TObjectPtr<UInputAction> DiveAction;
 
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> ScaleParts;
 	UPROPERTY() TArray<TObjectPtr<UStaticMeshComponent>> MembraneParts;
@@ -132,12 +195,39 @@ private:
 	float WingBeatTimer = 0.f;
 	float ImpactCooldown = 0.f;
 	float YawRate = 0.f;
+	float LastLookInputTime = -10.f;
+
+	// Power dive state
+	bool bDiveHeld = false;
+	float DiveAmount = 0.f;
+	float PullOutTime = 0.f;
+
+	// Water state
+	UPROPERTY() TObjectPtr<UPrimitiveComponent> WaterComponent;
+	UPROPERTY() TObjectPtr<UExponentialHeightFogComponent> WorldFog;
+	bool bUnderwater = false;
+	bool bSubmerged = false;     // centre has actually gone below Z=0 during this plunge
+	bool bBurstRising = false;   // Space pressed / out of breath: drive hard for the surface
+	float UnderwaterTime = 0.f;
+	float BuoyancyVelocity = 0.f;
+	float WaterIgnoreTime = 0.f; // keep ignoring the sea plane briefly after the exit so we clear it
+	float UnderwaterAmount = 0.f;
+	float BurstAmount = 0.f;
+	float UnderwaterView = 0.f;  // camera-below-surface blend for post-process + fog
+	float CamLagHoldTime = 0.f, CamLagHoldSpeed = 9.f, CamLagHoldMaxDistance = 900.f; // short camera-lag overrides on plunge/burst
+	bool bFogSaved = false;
+	float SavedFogDensity = 0.f, SavedFogStart = 0.f, SavedFogMaxOpacity = 1.f, SavedFogFalloff = 0.2f;
+	FLinearColor SavedFogColor = FLinearColor::White, SavedFogDirColor = FLinearColor::White;
+	bool bSavedVolumetricFog = false;
 
 	// Automated review mode (-DragonShots): scripted flight + screenshots, then quit.
 	void UpdateReviewMode(float Dt);
 	bool bReviewMode = false;
 	float ReviewTime = 0.f;
 	int32 ReviewShot = 0;
+	int32 ReviewPhase = 0;
+	float ReviewEventTime = 0.f;
+	void ReviewScreenshot(const TCHAR* What);
 
 	// Animation state
 	float FlapPhase = 0.f;

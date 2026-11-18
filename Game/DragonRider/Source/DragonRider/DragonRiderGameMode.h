@@ -13,7 +13,7 @@ public:
 	ADragonRiderGameMode();
 };
 
-/** Minimal flight HUD: title card on start, speed/altitude readout, stamina bar, control hints. */
+/** Minimal flight HUD: title card on start, speed/altitude readout, stamina bar, power-dive and underwater indicators, control hints. */
 UCLASS()
 class DRAGONRIDER_API ADragonHUD : public AHUD
 {

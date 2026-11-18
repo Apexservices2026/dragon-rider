@@ -56,7 +56,10 @@ void ADragonHUD::DrawHUD()
 	SpeedText.Scale = FVector2D(1.6f * Scale);
 	SpeedText.EnableShadow(FLinearColor(0, 0, 0, 0.6f));
 	Canvas->DrawItem(SpeedText);
-	FCanvasTextItem AltText(FVector2D(X, Y + 46.f * Scale), FText::FromString(FString::Printf(TEXT("ALT  %4.0f m"), Dragon->GetAltitudeMeters())), Small, Ink);
+	const FString AltString = Dragon->IsUnderwater()
+		? FString::Printf(TEXT("DEPTH  %3.0f m"), Dragon->GetDepthMeters())
+		: FString::Printf(TEXT("ALT  %4.0f m"), Dragon->GetAltitudeMeters());
+	FCanvasTextItem AltText(FVector2D(X, Y + 46.f * Scale), FText::FromString(AltString), Small, Ink);
 	AltText.Scale = FVector2D(1.2f * Scale);
 	AltText.EnableShadow(FLinearColor(0, 0, 0, 0.6f));
 	Canvas->DrawItem(AltText);
@@ -71,16 +74,51 @@ void ADragonHUD::DrawHUD()
 	Bar.BlendMode = SE_BLEND_Translucent;
 	Canvas->DrawItem(Bar);
 
+	// Power dive indicator: pulses above the speed readout while diving.
+	const float Dive = Dragon->GetDiveAmount();
+	if (Dive > 0.05f && !Dragon->IsUnderwater())
+	{
+		const float Pulse = 0.75f + 0.25f * FMath::Sin(T * 12.f);
+		FCanvasTextItem DiveText(FVector2D(X, Y - 44.f * Scale), FText::FromString(TEXT("POWER DIVE")), Small,
+			FLinearColor(1.f, 0.62f, 0.2f, Dive * Pulse));
+		DiveText.Scale = FVector2D(1.35f * Scale);
+		DiveText.EnableShadow(FLinearColor(0, 0, 0, 0.6f * Dive));
+		Canvas->DrawItem(DiveText);
+	}
+
+	// Underwater: depth readout and a breath bar (time until the dragon is forced back up).
+	if (Dragon->IsUnderwater())
+	{
+		const FLinearColor Sea(0.55f, 0.95f, 0.95f, 0.95f);
+		FCanvasTextItem Under(FVector2D(W * 0.5f, H * 0.2f), FText::FromString(FString::Printf(TEXT("UNDERWATER   %.0f m"), Dragon->GetDepthMeters())), Big, Sea);
+		Under.Scale = FVector2D(1.4f * Scale);
+		Under.bCentreX = true;
+		Under.EnableShadow(FLinearColor(0, 0, 0, 0.7f));
+		Canvas->DrawItem(Under);
+		FCanvasTextItem Hint(FVector2D(W * 0.5f, H * 0.2f + 46.f * Scale), FText::FromString(TEXT("SPACE  burst out")), Small, FLinearColor(0.8f, 0.95f, 0.95f, 0.8f));
+		Hint.Scale = FVector2D(1.1f * Scale);
+		Hint.bCentreX = true;
+		Hint.EnableShadow(FLinearColor(0, 0, 0, 0.6f));
+		Canvas->DrawItem(Hint);
+		const float BW = 240.f * Scale, BX = W * 0.5f - BW * 0.5f, BY = H * 0.2f + 82.f * Scale;
+		FCanvasTileItem BreathBack(FVector2D(BX, BY), FVector2D(BW, 6.f * Scale), FLinearColor(0, 0, 0, 0.45f));
+		BreathBack.BlendMode = SE_BLEND_Translucent;
+		Canvas->DrawItem(BreathBack);
+		FCanvasTileItem Breath(FVector2D(BX, BY), FVector2D(BW * Dragon->GetBreath01(), 6.f * Scale), Sea);
+		Breath.BlendMode = SE_BLEND_Translucent;
+		Canvas->DrawItem(Breath);
+	}
+
 	// Control hints for the first 25 seconds
 	const float HintAlpha = FMath::Clamp((25.f - T) / 3.f, 0.f, 1.f) * FMath::Clamp((T - 6.f) / 1.f, 0.f, 1.f);
 	if (HintAlpha > 0.f)
 	{
 		const TCHAR* Lines[] = {
 			TEXT("MOUSE  steer"), TEXT("W / S  faster / slower"), TEXT("A / D  bank turn"),
-			TEXT("SPACE  wing beat (climb)"), TEXT("SHIFT  boost"), TEXT("Q / E  barrel roll") };
+			TEXT("SPACE  wing beat (climb)"), TEXT("SHIFT  boost"), TEXT("CTRL / RMB  power dive"), TEXT("Q / E  barrel roll") };
 		for (int32 i = 0; i < UE_ARRAY_COUNT(Lines); ++i)
 		{
-			FCanvasTextItem L(FVector2D(W - 360.f * Scale, H - (230.f - i * 32.f) * Scale), FText::FromString(Lines[i]), Small,
+			FCanvasTextItem L(FVector2D(W - 360.f * Scale, H - (262.f - i * 32.f) * Scale), FText::FromString(Lines[i]), Small,
 				FLinearColor(0.92f, 0.94f, 0.96f, 0.8f * HintAlpha));
 			L.Scale = FVector2D(1.1f * Scale);
 			L.EnableShadow(FLinearColor(0, 0, 0, 0.6f * HintAlpha));

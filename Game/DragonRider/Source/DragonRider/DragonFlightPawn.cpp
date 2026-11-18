@@ -18,6 +18,11 @@
 #include "UObject/ConstructorHelpers.h"
 #include "UnrealClient.h"
 #include "Misc/CommandLine.h"
+#include "DragonSplash.h"
+#include "EngineUtils.h"
+#include "Engine/StaticMeshActor.h"
+#include "Engine/ExponentialHeightFog.h"
+#include "Components/ExponentialHeightFogComponent.h"
 
 namespace
 {
@@ -236,6 +241,88 @@ void ADragonFlightPawn::BeginPlay()
 	Speed = CruiseSpeed;
 	Stamina = MaxStamina;
 	bReviewMode = FParse::Param(FCommandLine::Get(), TEXT("DragonShots"));
+	FindWorldWaterAndFog();
+}
+
+void ADragonFlightPawn::FindWorldWaterAndFog()
+{
+	// The sea is a huge /Engine/BasicShapes/Plane static mesh actor at Z=0 (tools/build_opening_level.py).
+	for (TActorIterator<AStaticMeshActor> It(GetWorld()); It; ++It)
+	{
+		UStaticMeshComponent* SM = It->GetStaticMeshComponent();
+		if (SM && IsWaterComponent(SM)) { break; }
+	}
+	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
+	{
+		WorldFog = It->GetComponent();
+		break;
+	}
+}
+
+bool ADragonFlightPawn::IsWaterComponent(const UPrimitiveComponent* Comp)
+{
+	if (!Comp) { return false; }
+	if (Comp == WaterComponent) { return true; }
+	const UStaticMeshComponent* SM = Cast<UStaticMeshComponent>(Comp);
+	if (SM && SM->GetStaticMesh() && SM->GetStaticMesh()->GetName() == TEXT("Plane")
+		&& FMath::Abs(SM->GetComponentLocation().Z) < 50.f && SM->GetComponentScale().X > 100.f)
+	{
+		WaterComponent = const_cast<UStaticMeshComponent*>(SM);
+		return true;
+	}
+	return false;
+}
+
+void ADragonFlightPawn::EnterWater(const FVector& ImpactPoint)
+{
+	bUnderwater = true;
+	bSubmerged = false;
+	bBurstRising = false;
+	UnderwaterTime = 0.f;
+	BuoyancyVelocity = 0.f;
+	VerticalBoost = 0.f;
+	PullOutTime = 0.f;
+	bBoosting = false;
+	WaterIgnoreTime = 0.f;
+	if (WaterComponent) { Collision->IgnoreComponentWhenMoving(WaterComponent, true); }
+	CameraBoom->bDoCollisionTest = false; // the camera probe would otherwise pin the camera to the sea plane
+	// Let the camera hang above the surface for a beat so the splash is seen before it follows the dragon under.
+	CamLagHoldTime = 0.45f; CamLagHoldSpeed = 0.5f; CamLagHoldMaxDistance = 3500.f;
+
+	const FVector Dir = FRotator(FlightPitch, FlightYaw, 0.f).Vector();
+	ADragonSplash::Spawn(GetWorld(), ImpactPoint, Speed / 8500.f, false, Dir);
+	ShakeTime = 0.7f;
+	Speed *= 0.82f;
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW plunge speed=%.0fkmh pitch=%.1f"), GetSpeedKmh(), FlightPitch);
+}
+
+void ADragonFlightPawn::ExitWater()
+{
+	bUnderwater = false;
+	bBurstRising = false;
+	Speed = FMath::Max(Speed + BurstSpeedGain, BurstMinSpeed);
+	FlightPitch = FMath::Max(FlightPitch, BurstExitPitch);
+	VerticalBoost = BurstLift + FMath::Max(0.f, BuoyancyVelocity * 0.4f);
+	BuoyancyVelocity = 0.f;
+	if (AController* C = GetController())
+	{
+		FRotator CR = C->GetControlRotation();
+		// Camera levels out at the surface so the dragon is seen launching out of the splash, then eases up (pull-out).
+		CR.Pitch = 6.f;
+		C->SetControlRotation(CR);
+	}
+	WaterIgnoreTime = 0.6f;
+	PullOutTime = 1.4f;
+	UnderwaterAmount = 0.f; // camera arm/socket back to flight framing at once
+	CamLagHoldTime = 0.5f; CamLagHoldSpeed = 5.f; CamLagHoldMaxDistance = 2500.f; // camera trails at the surface as the dragon launches
+	BurstAmount = 1.f;
+	ShakeTime = 0.8f;
+	FlapIntensity = 1.9f;
+	FlapPhase = HALF_PI;
+	WingBeatTimer = 0.5f;
+	const FVector Dir = FRotator(FlightPitch, FlightYaw, 0.f).Vector();
+	ADragonSplash::Spawn(GetWorld(), GetActorLocation(), 1.7f, true, Dir);
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW burst after %.2fs speed=%.0fkmh"), UnderwaterTime, GetSpeedKmh());
 }
 
 void ADragonFlightPawn::UpdateReviewMode(float Dt)
@@ -261,20 +348,59 @@ void ADragonFlightPawn::UpdateReviewMode(float Dt)
 	if (T > 17.f && T < 23.f) { bBoosting = true; Aim.Pitch = -32.f; }
 	if (T >= 23.f && T < 24.f) { bBoosting = false; }
 	if (T > 23.f && T < 30.f) { Aim.Pitch = 22.f; OnWingBeat(FInputActionValue()); }
+	// Second act: climb out over the open sea, power-dive into the water, plunge, burst out.
+	if (T > 30.f && T < 35.5f) { Aim.Pitch = 30.f; OnWingBeat(FInputActionValue()); }
 	C->SetControlRotation(Aim);
 
 	static const float ShotTimes[] = { 3.f, 6.8f, 10.3f, 15.f, 21.5f, 27.f };
 	if (ReviewShot < UE_ARRAY_COUNT(ShotTimes) && T >= ShotTimes[ReviewShot])
 	{
-		FScreenshotRequest::RequestScreenshot(FString::Printf(TEXT("DragonReview_%02d"), ReviewShot), true, false);
-		UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW shot %d t=%.1f speed=%.0fkmh alt=%.0fm pitch=%.1f bank=%.1f loc=%s"),
-			ReviewShot, T, GetSpeedKmh(), GetAltitudeMeters(), FlightPitch, Bank, *GetActorLocation().ToString());
-		++ReviewShot;
+		ReviewScreenshot(TEXT("timed"));
 	}
-	if (T > 30.f)
+
+	switch (ReviewPhase)
+	{
+	case 0: // waiting to start the dive
+		if (T >= 35.5f) { OnDiveStart(FInputActionValue()); ReviewPhase = 1; ReviewEventTime = T; }
+		break;
+	case 1: // diving: shot once it is tucked and fast, then wait for the plunge
+		if (ReviewShot == 6 && ((DiveAmount > 0.9f && GetSpeedKmh() > 560.f) || GetAltitudeMeters() < 90.f)) { ReviewScreenshot(TEXT("power-dive")); }
+		if (bUnderwater)
+		{
+			if (ReviewShot == 6) { ReviewScreenshot(TEXT("power-dive (late)")); }
+			OnDiveStop(FInputActionValue());
+			ReviewPhase = 2; ReviewEventTime = T;
+		}
+		break;
+	case 2: // underwater
+		if (ReviewShot == 7 && T - ReviewEventTime > 0.3f) { ReviewScreenshot(TEXT("entry splash")); }
+		if (ReviewShot == 8 && ((T - ReviewEventTime > 0.8f && UnderwaterView > 0.95f) || T - ReviewEventTime > 1.5f)) { ReviewScreenshot(TEXT("underwater")); }
+		if (!bUnderwater)
+		{
+			while (ReviewShot < 9) { ReviewScreenshot(TEXT("underwater (missed)")); }
+			ReviewPhase = 3; ReviewEventTime = T;
+		}
+		break;
+	case 3: // burst
+		if (ReviewShot == 9 && T - ReviewEventTime > 0.3f) { ReviewScreenshot(TEXT("burst")); }
+		if (ReviewShot == 10 && T - ReviewEventTime > 1.1f) { ReviewScreenshot(TEXT("after burst")); }
+		if (T - ReviewEventTime > 3.f) { ReviewPhase = 4; }
+		break;
+	default: break;
+	}
+	if (ReviewPhase >= 4 || T > 70.f)
 	{
 		if (APlayerController* PC = Cast<APlayerController>(C)) { PC->ConsoleCommand(TEXT("quit")); }
 	}
+}
+
+void ADragonFlightPawn::ReviewScreenshot(const TCHAR* What)
+{
+	FScreenshotRequest::RequestScreenshot(FString::Printf(TEXT("DragonReview_%02d"), ReviewShot), true, false);
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW shot %d (%s) t=%.1f speed=%.0fkmh alt=%.1fm pitch=%.1f bank=%.1f dive=%.2f underwater=%d view=%.2f loc=%s"),
+		ReviewShot, What, ReviewTime, GetSpeedKmh(), GetAltitudeMeters(), FlightPitch, Bank, DiveAmount, bUnderwater ? 1 : 0, UnderwaterView,
+		*GetActorLocation().ToString());
+	++ReviewShot;
 }
 
 void ADragonFlightPawn::PossessedBy(AController* NewController)
@@ -300,6 +426,7 @@ void ADragonFlightPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	BoostAction = MakeAction(TEXT("IA_DragonBoost"), EInputActionValueType::Boolean);
 	WingBeatAction = MakeAction(TEXT("IA_DragonWingBeat"), EInputActionValueType::Boolean);
 	RollAction = MakeAction(TEXT("IA_DragonRoll"), EInputActionValueType::Axis1D);
+	DiveAction = MakeAction(TEXT("IA_DragonDive"), EInputActionValueType::Boolean);
 
 	FlightContext = NewObject<UInputMappingContext>(this, TEXT("IMC_DragonFlight"));
 	UInputMappingContext* C = FlightContext;
@@ -328,6 +455,9 @@ void ADragonFlightPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 	Negate(C->MapKey(RollAction, EKeys::Q));
 	C->MapKey(RollAction, EKeys::Gamepad_RightShoulder);
 	Negate(C->MapKey(RollAction, EKeys::Gamepad_LeftShoulder));
+	C->MapKey(DiveAction, EKeys::LeftControl);
+	C->MapKey(DiveAction, EKeys::RightMouseButton);
+	C->MapKey(DiveAction, EKeys::Gamepad_LeftTrigger);
 
 	if (APlayerController* PC = Cast<APlayerController>(GetController()))
 	{
@@ -349,12 +479,28 @@ void ADragonFlightPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCo
 		EIC->BindAction(BoostAction, ETriggerEvent::Completed, this, &ADragonFlightPawn::OnBoostStop);
 		EIC->BindAction(WingBeatAction, ETriggerEvent::Triggered, this, &ADragonFlightPawn::OnWingBeat);
 		EIC->BindAction(RollAction, ETriggerEvent::Started, this, &ADragonFlightPawn::OnRoll);
+		EIC->BindAction(DiveAction, ETriggerEvent::Started, this, &ADragonFlightPawn::OnDiveStart);
+		EIC->BindAction(DiveAction, ETriggerEvent::Completed, this, &ADragonFlightPawn::OnDiveStop);
 	}
+}
+
+void ADragonFlightPawn::OnDiveStart(const FInputActionValue&)
+{
+	bDiveHeld = true;
+	PullOutTime = 0.f;
+}
+
+void ADragonFlightPawn::OnDiveStop(const FInputActionValue&)
+{
+	// Only auto pull out of a real dive; a tap at cruise shouldn't yank the nose up.
+	if (bDiveHeld && !bUnderwater && DiveAmount > 0.3f) { PullOutTime = PullOutDuration; }
+	bDiveHeld = false;
 }
 
 void ADragonFlightPawn::OnLook(const FInputActionValue& Value)
 {
 	const FVector2D V = Value.Get<FVector2D>();
+	if (V.SizeSquared() > 0.04f) { LastLookInputTime = GetWorld()->GetTimeSeconds(); }
 	AddControllerYawInput(V.X * MouseSensitivity);
 	AddControllerPitchInput(-V.Y * MouseSensitivity);
 }
@@ -366,6 +512,12 @@ void ADragonFlightPawn::OnBoostStop(const FInputActionValue&) { bBoosting = fals
 
 void ADragonFlightPawn::OnWingBeat(const FInputActionValue&)
 {
+	// Under water, Space means "burst for the surface now".
+	if (bUnderwater)
+	{
+		if (UnderwaterTime > 0.2f) { bBurstRising = true; }
+		return;
+	}
 	if (WingBeatTimer > 0.f || Stamina < 3.f) { return; }
 	WingBeatTimer = 0.42f;
 	Speed += WingBeatSpeedGain;
@@ -397,6 +549,7 @@ void ADragonFlightPawn::Tick(float DeltaSeconds)
 void ADragonFlightPawn::UpdateFlight(float Dt)
 {
 	AController* C = GetController();
+	const bool bLookIdle = GetWorld()->GetTimeSeconds() - LastLookInputTime > 0.35f;
 
 	// A/D steer the aim sideways so keyboard-only players can turn without the mouse.
 	if (C && !FMath::IsNearlyZero(BankInput))
@@ -406,11 +559,57 @@ void ADragonFlightPawn::UpdateFlight(float Dt)
 		C->SetControlRotation(Aim);
 	}
 
-	FRotator Aim = C ? C->GetControlRotation() : GetActorRotation();
-	const float AimPitch = FMath::Clamp(FRotator::NormalizeAxis(Aim.Pitch), -80.f, 80.f);
+	// Power dive: tuck in, and pull the aim (and so the camera) toward a steep dive unless already steeper.
+	const bool bDiving = bDiveHeld && !bUnderwater;
+	DiveAmount += ((bDiving ? 1.f : 0.f) - DiveAmount) * ExpAlpha(bDiving ? PowerDiveBlendRate : PowerDiveBlendRate * 0.7f, Dt);
+	UnderwaterAmount += ((bUnderwater ? 1.f : 0.f) - UnderwaterAmount) * ExpAlpha(5.f, Dt);
+	BurstAmount = FMath::Max(0.f, BurstAmount - Dt / 1.1f);
+	PullOutTime = FMath::Max(0.f, PullOutTime - Dt);
+	if (C)
+	{
+		FRotator CR = C->GetControlRotation();
+		float P = FRotator::NormalizeAxis(CR.Pitch);
+		if (bDiving && P > PowerDivePitch + 12.f)
+		{
+			// Camera settles a little shallower than the dragon so the dive reads in 3/4 view rather than top-down.
+			P += (PowerDivePitch + 12.f - P) * ExpAlpha(3.2f * DiveAmount, Dt);
+		}
+		else if (PullOutTime > 0.f)
+		{
+			// Slingshot: after releasing the dive, ease the nose back up while momentum carries us.
+			if (!bLookIdle) { PullOutTime = 0.f; }
+			else if (P < PullOutPitch) { P += (PullOutPitch - P) * ExpAlpha(2.4f, Dt); }
+		}
+		else if (bUnderwater && bLookIdle)
+		{
+			// Let the camera swing round behind/below the dragon as it turns for the surface.
+			P += (FMath::Clamp(FlightPitch * 0.5f, -30.f, 25.f) - P) * ExpAlpha(2.5f, Dt);
+		}
+		CR.Pitch = P;
+		C->SetControlRotation(CR);
+	}
 
-	// Heading chases the camera aim; heavier when boosting.
-	const float Resp = TurnResponsiveness * (bBoosting ? 0.7f : 1.f) * FMath::Lerp(0.75f, 1.15f, Smooth01((Speed - MinSpeed) / CruiseSpeed));
+	FRotator Aim = C ? C->GetControlRotation() : GetActorRotation();
+	float AimPitch = FMath::Clamp(FRotator::NormalizeAxis(Aim.Pitch), -80.f, 80.f);
+	if (bUnderwater)
+	{
+		// Buoyancy turns the dragon toward the light; steering still works but loses this tug-of-war over time.
+		UnderwaterTime += Dt;
+		if (UnderwaterTime >= MaxUnderwaterTime) { bBurstRising = true; }
+		const float Rise = bBurstRising ? 1.f : Smooth01(UnderwaterTime / (MaxUnderwaterTime * 0.5f));
+		AimPitch = FMath::Lerp(AimPitch, bBurstRising ? 70.f : 55.f, Rise);
+	}
+	else
+	{
+		// Dive: nose to PowerDivePitch unless already steeper. Burst: hold a steep climb while the camera settles.
+		AimPitch = FMath::Lerp(AimPitch, FMath::Min(AimPitch, PowerDivePitch), DiveAmount);
+		if (BurstAmount > 0.f) { AimPitch = FMath::Max(AimPitch, BurstExitPitch * Smooth01(BurstAmount * 1.6f)); }
+	}
+
+	// Heading chases the camera aim; heavier when boosting or tucked in a dive.
+	float Resp = TurnResponsiveness * (bBoosting ? 0.7f : 1.f) * FMath::Lerp(0.75f, 1.15f, Smooth01((Speed - MinSpeed) / CruiseSpeed));
+	Resp *= FMath::Lerp(1.f, PowerDiveSteerScale, DiveAmount);
+	if (bUnderwater) { Resp *= bBurstRising ? 2.2f : 1.3f; }
 	const float A = ExpAlpha(Resp, Dt);
 	const float YawStep = FMath::FindDeltaAngleDegrees(FlightYaw, Aim.Yaw) * A;
 	FlightYaw = FRotator::NormalizeAxis(FlightYaw + YawStep);
@@ -421,6 +620,7 @@ void ADragonFlightPawn::UpdateFlight(float Dt)
 	Bank = FMath::FInterpTo(Bank, TargetBank, Dt, 4.f);
 
 	// Speed: throttle target + dive/climb energy exchange.
+	const float PrevSpeed = Speed;
 	float Target = ThrottleInput >= 0.f ? FMath::Lerp(CruiseSpeed, FastSpeed, ThrottleInput) : FMath::Lerp(CruiseSpeed, SlowSpeed, -ThrottleInput);
 	float Recovery = SpeedRecovery;
 	if (bBoosting)
@@ -434,12 +634,24 @@ void ADragonFlightPawn::UpdateFlight(float Dt)
 	{
 		Stamina = FMath::Min(MaxStamina, Stamina + StaminaRegenPerSecond * Dt);
 	}
-	if (Speed < Target || bBoosting) { Speed += (Target - Speed) * Recovery * Dt; }
-	else { Speed += (Target - Speed) * Recovery * 0.6f * Dt; } // bleed excess dive speed slowly
+	Recovery *= FMath::Lerp(1.f, PowerDiveDragScale, DiveAmount);
 
-	const float PitchSin = FMath::Sin(FMath::DegreesToRadians(FlightPitch));
-	Speed -= PitchSin * DiveAcceleration * (PitchSin > 0.f ? 0.55f : 1.f) * Dt;
-	Speed = FMath::Clamp(Speed, MinSpeed, MaxSpeed);
+	if (bUnderwater)
+	{
+		Speed += (UnderwaterSwimSpeed * (bBurstRising ? 1.6f : 1.f) - Speed) * ExpAlpha(UnderwaterDrag, Dt);
+	}
+	else
+	{
+		if (Speed < Target || bBoosting) { Speed += (Target - Speed) * Recovery * Dt; }
+		else { Speed += (Target - Speed) * Recovery * 0.6f * Dt; } // bleed excess dive speed slowly
+
+		const float PitchSin = FMath::Sin(FMath::DegreesToRadians(FlightPitch));
+		const float Gravity = PitchSin > 0.f ? 0.55f : FMath::Lerp(1.f, PowerDiveGravityScale, DiveAmount);
+		Speed -= PitchSin * DiveAcceleration * Gravity * Dt;
+	}
+	// Dive cap while diving; afterwards speed above MaxSpeed is kept (never grows) and bleeds off.
+	const float Cap = bDiving ? PowerDiveMaxSpeed : FMath::Max(MaxSpeed, FMath::Min(PrevSpeed, PowerDiveMaxSpeed));
+	Speed = FMath::Clamp(Speed, bUnderwater ? 800.f : MinSpeed, Cap);
 
 	WingBeatTimer = FMath::Max(0.f, WingBeatTimer - Dt);
 	VerticalBoost = FMath::FInterpTo(VerticalBoost, 0.f, Dt, 2.2f);
@@ -457,33 +669,72 @@ void ADragonFlightPawn::UpdateFlight(float Dt)
 	}
 
 	const FRotator FlightRot(FlightPitch, FlightYaw, 0.f);
-	const FVector Velocity = FlightRot.Vector() * Speed + FVector::UpVector * VerticalBoost + Dodge;
+	FVector Velocity = FlightRot.Vector() * Speed + FVector::UpVector * VerticalBoost + Dodge;
+	if (bUnderwater)
+	{
+		BuoyancyVelocity = FMath::Min(BuoyancyVelocity + Buoyancy * Dt, 4200.f);
+		if (bBurstRising) { BuoyancyVelocity = FMath::FInterpTo(BuoyancyVelocity, 7000.f, Dt, 5.f); }
+		Velocity += FVector::UpVector * BuoyancyVelocity;
+	}
 
 	FHitResult Hit;
 	AddActorWorldOffset(Velocity * Dt, true, &Hit);
 	if (Hit.bBlockingHit)
 	{
-		const FVector N = Hit.ImpactNormal;
-		const FVector Slide = FVector::VectorPlaneProject(Velocity * Dt * (1.f - Hit.Time), N);
-		AddActorWorldOffset(Slide + N * 8.f, true);
-
-		// Deflect heading along the surface and nose up off the ground so the dragon skims instead of sticking.
-		FVector NewDir = (FVector::VectorPlaneProject(FlightRot.Vector(), N).GetSafeNormal() + N * 0.4f).GetSafeNormal();
-		const FRotator NewRot = NewDir.Rotation();
-		FlightYaw = NewRot.Yaw;
-		FlightPitch = FMath::Max(NewRot.Pitch, N.Z > 0.5f ? 6.f : NewRot.Pitch);
-		if (C)
+		const bool bWater = !bUnderwater && IsWaterComponent(Hit.GetComponent());
+		const bool bSteepFast = FlightPitch < PlungeMaxPitch && Speed > PlungeMinSpeed;
+		if (bWater && (bSteepFast || (bDiving && FlightPitch < -10.f)))
 		{
-			FRotator CR = C->GetControlRotation();
-			CR.Yaw = FlightYaw;
-			CR.Pitch = FMath::Max(FRotator::NormalizeAxis(CR.Pitch), FlightPitch + 4.f);
-			C->SetControlRotation(CR);
+			// Plunge: stop colliding with the sea plane and carry on through it.
+			EnterWater(Hit.ImpactPoint);
+			AddActorWorldOffset(Velocity * Dt * (1.f - Hit.Time), true);
 		}
-		if (ImpactCooldown <= 0.f)
+		else
 		{
-			Speed *= 0.8f;
-			ShakeTime = 0.5f;
-			ImpactCooldown = 0.4f;
+			const FVector N = Hit.ImpactNormal;
+			const FVector Slide = FVector::VectorPlaneProject(Velocity * Dt * (1.f - Hit.Time), N);
+			AddActorWorldOffset(Slide + N * 8.f, true);
+
+			// Deflect heading along the surface and nose up off the ground so the dragon skims instead of sticking.
+			FVector NewDir = (FVector::VectorPlaneProject(FlightRot.Vector(), N).GetSafeNormal() + N * 0.4f).GetSafeNormal();
+			const FRotator NewRot = NewDir.Rotation();
+			FlightYaw = NewRot.Yaw;
+			FlightPitch = FMath::Max(NewRot.Pitch, N.Z > 0.5f ? 6.f : NewRot.Pitch);
+			if (C)
+			{
+				FRotator CR = C->GetControlRotation();
+				CR.Yaw = FlightYaw;
+				CR.Pitch = FMath::Max(FRotator::NormalizeAxis(CR.Pitch), FlightPitch + 4.f);
+				C->SetControlRotation(CR);
+			}
+			if (ImpactCooldown <= 0.f)
+			{
+				Speed *= 0.8f;
+				ShakeTime = 0.5f;
+				ImpactCooldown = 0.4f;
+			}
+		}
+	}
+
+	// Water state transitions by height.
+	const float Z = GetActorLocation().Z;
+	if (bUnderwater)
+	{
+		if (Z < -150.f) { bSubmerged = true; }
+		if ((bSubmerged && Z > 0.f) || (!bSubmerged && UnderwaterTime > 0.6f)) { ExitWater(); }
+	}
+	else if (WaterComponent && WaterIgnoreTime > 0.f)
+	{
+		WaterIgnoreTime -= Dt;
+		if (Z < -150.f) { EnterWater(FVector(GetActorLocation().X, GetActorLocation().Y, 0.f)); }
+		else if (WaterIgnoreTime <= 0.f)
+		{
+			if (Z > Collision->GetScaledSphereRadius() + 50.f)
+			{
+				Collision->IgnoreComponentWhenMoving(WaterComponent, false);
+				CameraBoom->bDoCollisionTest = true;
+			}
+			else { WaterIgnoreTime = 0.05f; } // still overlapping the surface; check again shortly
 		}
 	}
 
@@ -500,31 +751,47 @@ void ADragonFlightPawn::UpdateAnimation(float Dt)
 	if (bBoosting) { Rate = 1.9f; Intensity = 1.15f; }
 	if (bDiving) { Intensity = 0.08f; }
 	if (WingBeatTimer > 0.f) { Rate = 2.3f; }
+	// Tucked dive / underwater: wings stop beating (a slow swim stroke under water).
+	Intensity = FMath::Lerp(Intensity, 0.f, DiveAmount);
+	if (UnderwaterAmount > 0.01f) { Rate = FMath::Lerp(Rate, 0.7f, UnderwaterAmount); Intensity = FMath::Lerp(Intensity, 0.35f, UnderwaterAmount); }
 
 	FlapIntensity = FMath::FInterpTo(FlapIntensity, Intensity, Dt, WingBeatTimer > 0.f ? 1.0f : 2.5f);
 	FlapPhase = FMath::Fmod(FlapPhase + 2.f * PI * Rate * Dt, 2.f * PI);
 
 	const float Flap = FMath::Sin(FlapPhase);
 	const float Sweep = FMath::Lerp(0.f, 38.f, Smooth01((Speed - FastSpeed) / (BoostSpeed - FastSpeed)) + (bDiving ? 0.7f : 0.f));
-	const float Shoulder = 6.f + Flap * 40.f * FlapIntensity;
-	const float Wrist = (bDiving ? -10.f : 4.f) + FMath::Sin(FlapPhase - 1.0f) * 30.f * FlapIntensity;
+	float ShoulderSweep = FMath::Min(Sweep, 45.f), TipSweep = Sweep * 0.4f;
+	float Shoulder = 6.f + Flap * 40.f * FlapIntensity;
+	float Wrist = (bDiving ? -10.f : 4.f) + FMath::Sin(FlapPhase - 1.0f) * 30.f * FlapIntensity;
 
-	RightWingPivot->SetRelativeRotation(FRotator(0.f, FMath::Min(Sweep, 45.f), Shoulder));
-	LeftWingPivot->SetRelativeRotation(FRotator(0.f, -FMath::Min(Sweep, 45.f), -Shoulder));
-	RightWingTipPivot->SetRelativeRotation(FRotator(0.f, Sweep * 0.4f, Wrist));
-	LeftWingTipPivot->SetRelativeRotation(FRotator(0.f, -Sweep * 0.4f, -Wrist));
+	// Fully tucked pose: arms swept hard back along the body, finger folded back, wings held flat and tight.
+	const float Tuck = FMath::Max(DiveAmount, UnderwaterAmount * 0.75f);
+	ShoulderSweep = FMath::Lerp(ShoulderSweep, 66.f, Tuck);
+	TipSweep = FMath::Lerp(TipSweep, 30.f, Tuck);
+	Shoulder = FMath::Lerp(Shoulder, 3.f + Flap * 40.f * FlapIntensity * 0.3f, Tuck);
+	Wrist = FMath::Lerp(Wrist, -6.f, Tuck);
+	// Burst: wings flung wide and high.
+	Shoulder += BurstAmount * 22.f;
+	ShoulderSweep *= 1.f - BurstAmount * 0.8f;
+
+	RightWingPivot->SetRelativeRotation(FRotator(0.f, ShoulderSweep, Shoulder));
+	LeftWingPivot->SetRelativeRotation(FRotator(0.f, -ShoulderSweep, -Shoulder));
+	RightWingTipPivot->SetRelativeRotation(FRotator(0.f, TipSweep, Wrist));
+	LeftWingTipPivot->SetRelativeRotation(FRotator(0.f, -TipSweep, -Wrist));
 
 	// Body rises on the downstroke, settles on the upstroke.
 	BodyRoot->SetRelativeLocation(FVector(0.f, 0.f, -FMath::Cos(FlapPhase) * 22.f * FlapIntensity));
 	BodyRoot->SetRelativeRotation(FRotator(FMath::Cos(FlapPhase) * 2.f * FlapIntensity, 0.f, 0.f));
 
-	// Head looks into turns; tail counter-swings with a travelling wave.
-	NeckPivot->SetRelativeRotation(FRotator(FMath::Sin(AnimTime * 0.9f) * 3.f - FlightPitch * 0.08f, FMath::Clamp(YawRate * 0.12f, -18.f, 18.f), 0.f));
+	// Head looks into turns (stretched forward in a dive); tail counter-swings with a travelling wave, straightens in a dive.
+	const float TailCalm = 1.f - 0.75f * DiveAmount;
+	NeckPivot->SetRelativeRotation(FRotator(FMath::Sin(AnimTime * 0.9f) * 3.f * TailCalm - FlightPitch * 0.08f - DiveAmount * 12.f,
+		FMath::Clamp(YawRate * 0.12f, -18.f, 18.f), 0.f));
 	for (int32 i = 0; i < TailSegments.Num(); ++i)
 	{
-		const float Wave = FMath::Sin(AnimTime * 1.6f - i * 0.6f);
-		const float YawAmt = Wave * (3.f + i * 1.2f) - FMath::Clamp(YawRate * 0.05f, -8.f, 8.f);
-		const float PitchAmt = FMath::Sin(AnimTime * 1.1f - i * 0.5f) * 2.5f + FlightPitch * 0.04f;
+		const float Wave = FMath::Sin(AnimTime * (1.6f + UnderwaterAmount * 2.f) - i * 0.6f);
+		const float YawAmt = Wave * (3.f + i * 1.2f) * (TailCalm + UnderwaterAmount * 1.5f) - FMath::Clamp(YawRate * 0.05f, -8.f, 8.f);
+		const float PitchAmt = FMath::Sin(AnimTime * 1.1f - i * 0.5f) * 2.5f * TailCalm + FlightPitch * 0.04f * TailCalm;
 		TailSegments[i]->SetRelativeRotation(FRotator(PitchAmt, YawAmt, 0.f));
 	}
 }
@@ -532,12 +799,86 @@ void ADragonFlightPawn::UpdateAnimation(float Dt)
 void ADragonFlightPawn::UpdateCamera(float Dt)
 {
 	const float Speed01 = Smooth01((Speed - SlowSpeed) / (BoostSpeed - SlowSpeed));
-	Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, FMath::Lerp(BaseFOV, MaxFOV, FMath::Pow(Speed01, 1.3f)), Dt, 2.5f));
-	CameraBoom->TargetArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, BaseArmLength + SpeedArmExtra * Speed01, Dt, 2.f);
+	const float Over01 = Smooth01((Speed - BoostSpeed) / (PowerDiveMaxSpeed - BoostSpeed)); // beyond boost speed
+	const float FOVTarget = FMath::Lerp(BaseFOV, MaxFOV, FMath::Pow(Speed01, 1.3f))
+		+ PowerDiveFOVExtra * DiveAmount * (0.35f + 0.65f * Over01) + BurstAmount * 10.f - UnderwaterAmount * 8.f;
+	Camera->SetFieldOfView(FMath::FInterpTo(Camera->FieldOfView, FOVTarget, Dt, 2.5f + BurstAmount * 3.f));
+	const float ArmTarget = (BaseArmLength + SpeedArmExtra * Speed01)
+		* FMath::Lerp(1.f, PowerDiveArmScale, DiveAmount) * FMath::Lerp(1.f, 0.6f, UnderwaterAmount) + BurstAmount * 900.f;
+	// Burst: swing the camera back fast so the exit splash and the launching dragon share the frame.
+	CameraBoom->TargetArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, ArmTarget, Dt, 2.f + 6.f * BurstAmount);
+	CameraBoom->SocketOffset.Z = FMath::Lerp(560.f, 160.f, UnderwaterAmount);
+	CamLagHoldTime = FMath::Max(0.f, CamLagHoldTime - Dt);
+	CameraBoom->CameraLagSpeed = CamLagHoldTime > 0.f ? CamLagHoldSpeed : 9.f;
+	CameraBoom->CameraLagMaxDistance = CamLagHoldTime > 0.f ? CamLagHoldMaxDistance : 900.f;
 
 	ShakeTime = FMath::Max(0.f, ShakeTime - Dt);
-	const float Amp = Speed01 * Speed01 * 5.f + ShakeTime * 45.f;
+	const float Amp = Speed01 * Speed01 * 5.f + ShakeTime * 45.f + DiveAmount * (3.f + 16.f * Over01) + BurstAmount * 10.f;
 	const float T = AnimTime;
 	Camera->SetRelativeLocation(FVector(0.f, (FMath::Sin(T * 31.f) + 0.5f * FMath::Sin(T * 17.3f)) * Amp, FMath::Cos(T * 27.f) * Amp));
 	Camera->SetRelativeRotation(FRotator(-9.f, 0.f, Bank * 0.12f)); // look down onto the dragon's back
+
+	UpdateUnderwaterView(Dt);
+}
+
+void ADragonFlightPawn::UpdateUnderwaterView(float Dt)
+{
+	// Murky blue-green look whenever the camera itself is below the surface.
+	const float Target = Camera->GetComponentLocation().Z < -10.f ? 1.f : 0.f;
+	UnderwaterView = FMath::FInterpConstantTo(UnderwaterView, Target, Dt, 6.f);
+	const float U = UnderwaterView;
+	const bool bOn = U > 0.001f;
+
+	FPostProcessSettings& PP = Camera->PostProcessSettings;
+	PP.bOverride_SceneColorTint = bOn;
+	PP.SceneColorTint = FMath::Lerp(FLinearColor::White, FLinearColor(0.32f, 0.78f, 0.80f), U);
+	PP.bOverride_ColorSaturation = bOn;
+	PP.ColorSaturation = FVector4(FMath::Lerp(1.f, 0.55f, U), FMath::Lerp(1.f, 0.55f, U), FMath::Lerp(1.f, 0.55f, U), 1.f);
+	PP.bOverride_ColorContrast = bOn;
+	PP.ColorContrast = FVector4(FMath::Lerp(1.f, 0.8f, U), FMath::Lerp(1.f, 0.8f, U), FMath::Lerp(1.f, 0.8f, U), 1.f);
+	PP.bOverride_AutoExposureBias = bOn;
+	PP.AutoExposureBias = FMath::Lerp(0.4f, -0.4f, U);
+	PP.VignetteIntensity = FMath::Lerp(0.45f, 1.2f, U);
+	PP.bOverride_BloomIntensity = bOn;
+	PP.BloomIntensity = FMath::Lerp(0.9f, 2.2f, U);
+	PP.bOverride_SceneFringeIntensity = bOn;
+	PP.SceneFringeIntensity = FMath::Lerp(0.6f, 3.5f, U);
+	PP.bOverride_DepthOfFieldFocalDistance = bOn;
+	PP.DepthOfFieldFocalDistance = 700.f;
+	PP.bOverride_DepthOfFieldFstop = bOn;
+	PP.DepthOfFieldFstop = 1.2f;
+
+	// Short visibility: thicken the level's height fog into murky water while the camera is submerged.
+	if (!WorldFog) { return; }
+	if (bOn && !bFogSaved)
+	{
+		SavedFogDensity = WorldFog->FogDensity;
+		SavedFogFalloff = WorldFog->FogHeightFalloff;
+		SavedFogColor = WorldFog->FogInscatteringLuminance;
+		SavedFogDirColor = WorldFog->DirectionalInscatteringLuminance;
+		SavedFogStart = WorldFog->StartDistance;
+		SavedFogMaxOpacity = WorldFog->FogMaxOpacity;
+		bSavedVolumetricFog = WorldFog->bEnableVolumetricFog;
+		bFogSaved = true;
+		WorldFog->SetVolumetricFog(false);
+	}
+	if (!bFogSaved) { return; }
+	if (!bOn)
+	{
+		WorldFog->SetFogDensity(SavedFogDensity);
+		WorldFog->SetFogHeightFalloff(SavedFogFalloff);
+		WorldFog->SetFogInscatteringColor(SavedFogColor);
+		WorldFog->SetDirectionalInscatteringColor(SavedFogDirColor);
+		WorldFog->SetStartDistance(SavedFogStart);
+		WorldFog->SetFogMaxOpacity(SavedFogMaxOpacity);
+		WorldFog->SetVolumetricFog(bSavedVolumetricFog);
+		bFogSaved = false;
+		return;
+	}
+	WorldFog->SetFogDensity(FMath::Lerp(SavedFogDensity, 1.3f, U));
+	WorldFog->SetFogHeightFalloff(FMath::Lerp(SavedFogFalloff, 0.001f, U));
+	WorldFog->SetFogInscatteringColor(FMath::Lerp(SavedFogColor, FLinearColor(0.02f, 0.09f, 0.1f), U));
+	WorldFog->SetDirectionalInscatteringColor(FMath::Lerp(SavedFogDirColor, FLinearColor(0.02f, 0.08f, 0.07f), U));
+	WorldFog->SetStartDistance(FMath::Lerp(SavedFogStart, 0.f, U));
+	WorldFog->SetFogMaxOpacity(FMath::Lerp(SavedFogMaxOpacity, 1.f, U));
 }

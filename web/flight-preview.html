@@ -60,21 +60,35 @@ body { background: var(--night); color: var(--frost); font-family: var(--ui); ov
 .btn.small { height: 46px; }
 body.touch #keys { display: none; }
 body.touch #gauge { bottom: calc(env(safe-area-inset-bottom, 0px) + 170px); }
-@media (prefers-reduced-motion: reduce) { #title, #keys, #warn { transition: none; } }
+#pads .wide { grid-column: span 2; }
+
+/* Power dive + underwater indicators, murky water overlay */
+#dive { font-size: 17px; font-weight: 600; letter-spacing: .2em; color: var(--ember-hot); opacity: 0; }
+#under { left: 0; right: 0; top: 18%; text-align: center; opacity: 0; transition: opacity .2s; color: #9ff2f0; }
+#under b { display: block; font-size: 30px; font-weight: 600; letter-spacing: .18em; }
+#under span { display: block; font-size: 15px; letter-spacing: .14em; color: #cdeeee; margin-top: 4px; }
+#breath { width: 220px; height: 5px; margin: 10px auto 0; background: rgba(0,0,0,.45); border-radius: 3px; overflow: hidden; }
+#breath i { display: block; height: 100%; width: 100%; background: #9ff2f0; }
+#murk { position: fixed; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at 50% 30%, rgba(40,130,135,.18), rgba(4,32,40,.55) 60%, rgba(1,12,18,.85)); }
+@media (prefers-reduced-motion: reduce) { #title, #keys, #warn, #under { transition: none; } }
 </style>
 
 <canvas id="scene" aria-label="Dragon flight over a Nordic fjord"></canvas>
 
 <div class="hud" id="title"><h1>Dragon Rider</h1><p>The fjords of the North await</p></div>
+<div id="murk"></div>
 <div class="hud" id="warn">TURN BACK TO THE FJORD</div>
+<div class="hud" id="under"><b>UNDERWATER</b><span id="underTxt">0 M &middot; SPACE TO BURST OUT</span><div id="breath"><i></i></div></div>
 <div class="hud" id="gauge">
+  <div id="dive">POWER DIVE</div>
   <div id="speed">0<small>KM/H</small></div>
   <div id="alt">ALT 0 M</div>
   <div id="stam"><i></i></div>
 </div>
 <div class="hud" id="keys">
   <b>MOUSE</b><span>steer</span><b>W / S</b><span>faster / slower</span><b>A / D</b><span>bank turn</span>
-  <b>SPACE</b><span>wing beat</span><b>SHIFT</b><span>boost</span><b>Q / E</b><span>barrel roll</span>
+  <b>SPACE</b><span>wing beat</span><b>SHIFT</b><span>boost</span><b>CTRL / RMB</b><span>power dive</span><b>Q / E</b><span>barrel roll</span>
 </div>
 <button id="sound" type="button" aria-pressed="false">SOUND OFF</button>
 
@@ -85,6 +99,7 @@ body.touch #gauge { bottom: calc(env(safe-area-inset-bottom, 0px) + 170px); }
     <button class="btn small" id="rollR" type="button" aria-label="Barrel roll right">ROLL &#8635;</button>
     <button class="btn" id="boostB" type="button">BOOST</button>
     <button class="btn" id="beatB" type="button">WING BEAT</button>
+    <button class="btn wide" id="diveB" type="button">DIVE</button>
   </div>
 </div>
 
@@ -98,10 +113,11 @@ body.touch #gauge { bottom: calc(env(safe-area-inset-bottom, 0px) + 170px); }
       <dt>A / D</dt><dd>Bank turn</dd>
       <dt>Space</dt><dd>Wing beat to climb</dd>
       <dt>Shift</dt><dd>Boost (uses stamina)</dd>
+      <dt>Ctrl / right mouse</dt><dd>Hold to power-dive (C works too)</dd>
       <dt>Q / E</dt><dd>Barrel roll</dd>
     </dl>
     <button id="fly" type="button">FLY</button>
-    <p class="note">Dive to build speed, climb to trade it back for height. Arrow keys also steer.</p>
+    <p class="note">Dive to build speed, climb to trade it back for height. Power-dive into the sea to plunge under, then burst back out. Arrow keys also steer.</p>
   </div>
 </div>
 
@@ -120,7 +136,11 @@ const isTouch = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer
 // ---------------------------------------------------------------- tuning (metres, seconds, degrees): mirrors ADragonFlightPawn defaults
 const S = { cruise: 42, fast: 65, slow: 18, boost: 105, min: 12, max: 150, recovery: 0.55, dive: 26, resp: 2.6,
   maxBank: 70, bankPerYaw: 0.75, strafeYaw: 55, beatGain: 9, beatLift: 16, rollDur: 0.65, maxStam: 100, drain: 22, regen: 14,
-  fov: 78, fovMax: 104, arm: 15, armExtra: 7, socket: 5.6 };
+  fov: 78, fovMax: 104, arm: 15, armExtra: 7, socket: 5.6,
+  // power dive (PowerDive* properties) and water plunge / burst (Dragon|Water properties)
+  diveP: -65, diveGrav: 4.0, diveDrag: 0.12, diveMax: 222, diveSteer: 0.6, diveBlend: 4, pullPitch: 12, pullDur: 1.3, diveFov: 14, diveArm: 0.78,
+  plungePitch: -25, plungeSpeed: 55, uwDrag: 3.4, swim: 26, buoy: 23, uwMax: 2.5, burstGain: 32, burstMin: 90, burstLift: 60, burstPitch: 38 };
+const WATER_FOG = new THREE.Color(0.03, 0.13, 0.14);
 
 // ---------------------------------------------------------------- renderer / scene
 const canvas = document.getElementById('scene');
@@ -239,7 +259,7 @@ function heightAt(x, z) {
   scene.add(new THREE.Mesh(g, new THREE.MeshStandardMaterial({ vertexColors: true, roughness: .93, metalness: 0, envMapIntensity: .35 })));
 }
 const water = new THREE.Mesh(new THREE.PlaneGeometry(80000, 80000),
-  new THREE.MeshStandardMaterial({ color: new THREE.Color('#0d1d26').convertSRGBToLinear(), roughness: .12, metalness: .55, envMapIntensity: .9 }));
+  new THREE.MeshStandardMaterial({ color: new THREE.Color('#0d1d26').convertSRGBToLinear(), roughness: .12, metalness: .55, envMapIntensity: .9, side: THREE.DoubleSide }));
 water.rotation.x = -Math.PI / 2; scene.add(water);
 
 // Clouds: soft billboards high above the fjord.
@@ -361,11 +381,55 @@ streakGeo.setAttribute('position', new THREE.BufferAttribute(streakPos, 3));
 const streakMat = new THREE.PointsMaterial({ color: 0xffffff, size: .14, transparent: true, opacity: 0, depthWrite: false, fog: false });
 const streaks = new THREE.Points(streakGeo, streakMat); streaks.frustumCulled = false; scene.add(streaks);
 
+// Water splash (port of ADragonSplash): pooled foam particles thrown up under gravity + spreading foam rings.
+const SPL = 1400, SPL_G = 16.5;
+const splGeo = new THREE.BufferGeometry();
+const splPos = new Float32Array(SPL * 3).fill(-1e5), splCol = new Float32Array(SPL * 3), splVel = new Float32Array(SPL * 3), splLife = new Float32Array(SPL), splMax = new Float32Array(SPL);
+splGeo.setAttribute('position', new THREE.BufferAttribute(splPos, 3)); splGeo.setAttribute('color', new THREE.BufferAttribute(splCol, 3));
+const splTex = (() => { const cv = document.createElement('canvas'); cv.width = cv.height = 64; const x = cv.getContext('2d'), g = x.createRadialGradient(32, 32, 2, 32, 32, 31);
+  g.addColorStop(0, 'rgba(255,255,255,1)'); g.addColorStop(.45, 'rgba(255,255,255,.75)'); g.addColorStop(1, 'rgba(255,255,255,0)'); x.fillStyle = g; x.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(cv); })();
+const splash = new THREE.Points(splGeo, new THREE.PointsMaterial({ size: 1.5, map: splTex, vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+splash.frustumCulled = false; scene.add(splash);
+const rings = [...Array(4)].map(() => { const m = new THREE.Mesh(new THREE.RingGeometry(.82, 1, 56), new THREE.MeshBasicMaterial({ color: 0xdff4f6, transparent: true, opacity: 0, depthWrite: false, side: THREE.DoubleSide }));
+  m.rotation.x = -Math.PI / 2; m.position.y = .08; m.visible = false; m.userData = { t: 0, life: 1, r: 10 }; scene.add(m); return m; });
+let splNext = 0, ringNext = 0;
+function emitSplash(x, z, strength, exit, fx, fz) {
+  const s = clamp(strength, .4, 1.8), rs = Math.sqrt(s), R = Math.random;
+  const emit = (n, h0, h1, v0, v1, r0, life) => { for (let i = 0; i < n; i++) {
+    const k = splNext; splNext = (splNext + 1) % SPL; const a = R() * Math.PI * 2, h = lerp(h0, h1, R()) * rs, ca = Math.cos(a), sa = Math.sin(a);
+    splPos.set([x + ca * r0 * s, .2, z + sa * r0 * s], k * 3);
+    splVel.set([ca * h + fx * 5 * rs, lerp(v0, v1, R()) * rs, sa * h + fz * 5 * rs], k * 3);
+    splLife[k] = splMax[k] = life * (.75 + R() * .5); } };
+  emit(Math.round(150 * s), 6.5, 11.5, exit ? 19 : 11, exit ? 28 : 17.5, 2.2, 1.5);  // crown
+  emit(Math.round(90 * s), 0, 2, exit ? 25 : 13, exit ? 35 : 20, .6, 1.6);           // central column
+  emit(Math.round(110 * s), 9, 19, 7, exit ? 24 : 17, 1.2, 1.1);                     // fine spray
+  for (let j = 0; j < 2; j++) { const m = rings[ringNext]; ringNext = (ringNext + 1) % rings.length;
+    m.position.x = x; m.position.z = z; m.visible = true; m.userData = { t: -j * .18, life: 1.5 + .25 * s, r: (9 + 6.5 * s) * (1 - j * .35) }; }
+}
+function updateSplash(dt) {
+  for (let k = 0; k < SPL; k++) {
+    if (splLife[k] <= 0) continue;
+    const i = k * 3; splLife[k] -= dt;
+    splVel[i + 1] -= SPL_G * dt; const d = Math.exp(-.35 * dt); splVel[i] *= d; splVel[i + 1] *= d; splVel[i + 2] *= d;
+    splPos[i] += splVel[i] * dt; splPos[i + 1] += splVel[i + 1] * dt; splPos[i + 2] += splVel[i + 2] * dt;
+    if (splLife[k] <= 0 || (splPos[i + 1] < -.4 && splVel[i + 1] < 0)) { splLife[k] = 0; splPos[i + 1] = -1e5; continue; }
+    const f = Math.min(1, splLife[k] / splMax[k] * 1.6) * .8; splCol[i] = f * .9; splCol[i + 1] = f * .97; splCol[i + 2] = f;
+  }
+  splGeo.attributes.position.needsUpdate = true; splGeo.attributes.color.needsUpdate = true;
+  for (const m of rings) { if (!m.visible) continue; const u = m.userData; u.t += dt;
+    if (u.t >= u.life) { m.visible = false; continue; }
+    const t = Math.max(0, u.t), r = 2 + u.r * (1 - Math.exp(-2.6 * t)); m.scale.set(r, r, 1);
+    m.material.opacity = u.t < 0 ? 0 : .85 * (1 - smooth((t / u.life - .3) / .7)); }
+}
+
 // ---------------------------------------------------------------- state
 const st = {
   pos: new THREE.Vector3(), yaw: 0, pitch: 0, aimYaw: 0, aimPitch: -6, speed: S.cruise, bank: 0, roll: 0, rollDir: 0, rollLeft: 0,
   vBoost: 0, stam: S.maxStam, boosting: false, beatTimer: 0, impactCd: 0, yawRate: 0, flap: 0, flapInt: 1, t: 0, shake: 0,
-  camYaw: 0, camPitch: -6, camPos: new THREE.Vector3(), flying: false, started: 0
+  camYaw: 0, camPitch: -6, camPos: new THREE.Vector3(), flying: false, started: 0,
+  // power dive + water: same state values the Unreal pawn exposes (DiveAmount, UnderwaterAmount, BurstAmount)
+  diveHeld: false, dive: 0, pullOut: 0, lookT: -10, under: false, submerged: false, burstRise: false, uwT: 0, buoyV: 0,
+  ignore: 0, uwAmt: 0, burst: 0, uwView: 0, lagHold: 0, lagRate: 9, lagMax: 9
 };
 function resetFlight() {
   const x0 = -7900, z0 = centre(-5200);
@@ -385,23 +449,31 @@ addEventListener('keydown', e => {
   if (e.repeat) return; keys.add(e.code);
   if (e.code === 'KeyE') startRoll(1); if (e.code === 'KeyQ') startRoll(-1);
   if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.boosting = st.stam > 5;
+  if (DIVE_KEYS.includes(e.code)) diveStart();
   if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.code)) e.preventDefault();
 });
-addEventListener('keyup', e => { keys.delete(e.code); if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.boosting = false; });
-addEventListener('blur', () => { keys.clear(); st.boosting = false; });
+addEventListener('keyup', e => { keys.delete(e.code); if (e.code === 'ShiftLeft' || e.code === 'ShiftRight') st.boosting = false; if (DIVE_KEYS.includes(e.code)) diveStop(); });
+addEventListener('blur', () => { keys.clear(); st.boosting = false; diveStop(); });
 const SENS = 0.11;
 let locked = false, dragFrom = null;
 document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; if (!locked && st.flying && !isTouch) pause(); });
 canvas.addEventListener('mousemove', e => {
   if (!st.flying) return;
-  if (locked) { st.aimYaw -= e.movementX * SENS; st.aimPitch -= e.movementY * SENS; }
+  if (locked) { st.aimYaw -= e.movementX * SENS; st.aimPitch -= e.movementY * SENS; if (Math.abs(e.movementX) + Math.abs(e.movementY) > 2) st.lookT = st.t; }
   else if (dragFrom) { inp.stickX = clamp((e.clientX - dragFrom[0]) / 140, -1, 1); inp.stickY = clamp((e.clientY - dragFrom[1]) / 140, -1, 1); }
 });
-canvas.addEventListener('mousedown', e => { if (st.flying && !locked) dragFrom = [e.clientX, e.clientY]; });
-addEventListener('mouseup', () => { dragFrom = null; if (!isTouch) { inp.stickX = inp.stickY = 0; } });
+canvas.addEventListener('mousedown', e => { if (e.button === 2) { if (st.flying) diveStart(); return; } if (st.flying && !locked) dragFrom = [e.clientX, e.clientY]; });
+addEventListener('mouseup', e => { if (e.button === 2) { diveStop(); return; } dragFrom = null; if (!isTouch) { inp.stickX = inp.stickY = 0; } });
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+// Power dive: hold Ctrl / C / right mouse (touch: DIVE). Releasing a real dive eases the nose back up (slingshot).
+const DIVE_KEYS = ['ControlLeft', 'ControlRight', 'KeyC'];
+function diveStart() { st.diveHeld = true; st.pullOut = 0; }
+function diveStop() { if (st.diveHeld && !st.under && st.dive > .3) st.pullOut = S.pullDur; st.diveHeld = false; }
 
 function startRoll(d) { if (st.rollLeft > 0) return; st.rollDir = d; st.rollLeft = S.rollDur; st.shake = .15; whoosh(.5); }
 function wingBeat() {
+  if (st.under) { if (st.uwT > .2) st.burstRise = true; return; } // under water: burst for the surface
   if (st.beatTimer > 0 || st.stam < 3) return;
   st.beatTimer = .42; st.speed += S.beatGain; st.vBoost = Math.min(st.vBoost + S.beatLift, S.beatLift * 1.6); st.stam -= 3;
   st.flapInt = 1.7; st.flap = Math.PI / 2; thump();
@@ -414,8 +486,8 @@ const held = { beat: false, boost: false };
 if (isTouch) {
   document.body.classList.add('touch');
   document.getElementById('touch').hidden = false;
-  document.querySelector('#card dl').innerHTML = '<dt>Drag</dt><dd>Anywhere on the left to steer</dd><dt>Wing beat</dt><dd>Hold to climb</dd><dt>Boost</dt><dd>Hold for speed (uses stamina)</dd><dt>Roll</dt><dd>Barrel roll left or right</dd>';
-  document.querySelector('#card .note').textContent = 'Dive to build speed, climb to trade it back for height. Turn your phone sideways for the best view.';
+  document.querySelector('#card dl').innerHTML = '<dt>Drag</dt><dd>Anywhere on the left to steer</dd><dt>Wing beat</dt><dd>Hold to climb (under water: burst out)</dd><dt>Boost</dt><dd>Hold for speed (uses stamina)</dd><dt>Dive</dt><dd>Hold to power-dive</dd><dt>Roll</dt><dd>Barrel roll left or right</dd>';
+  document.querySelector('#card .note').textContent = 'Dive to build speed, climb to trade it back for height. Power-dive into the sea to plunge under. Turn your phone sideways for the best view.';
   canvas.addEventListener('touchstart', e => { for (const t of e.changedTouches) if (stickId === null) { stickId = t.identifier; stickO = [t.clientX, t.clientY]; stickEl.hidden = false; stickEl.style.left = t.clientX + 'px'; stickEl.style.top = t.clientY + 'px'; knob.style.transform = ''; } e.preventDefault(); }, { passive: false });
   canvas.addEventListener('touchmove', e => { for (const t of e.changedTouches) if (t.identifier === stickId) { const dx = clamp(t.clientX - stickO[0], -55, 55), dy = clamp(t.clientY - stickO[1], -55, 55); inp.stickX = dx / 55; inp.stickY = dy / 55; knob.style.transform = `translate(${dx}px,${dy}px)`; } e.preventDefault(); }, { passive: false });
   const end = e => { for (const t of e.changedTouches) if (t.identifier === stickId) { stickId = null; inp.stickX = inp.stickY = 0; stickEl.hidden = true; } };
@@ -425,6 +497,10 @@ if (isTouch) {
     const up = () => { held[key] = false; b.classList.remove('on'); if (key === 'boost') st.boosting = false; };
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up); };
   hold('beatB', 'beat'); hold('boostB', 'boost');
+  { const b = document.getElementById('diveB');
+    b.addEventListener('pointerdown', e => { e.preventDefault(); b.classList.add('on'); diveStart(); });
+    const up = () => { b.classList.remove('on'); diveStop(); };
+    b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('pointerleave', up); }
   document.getElementById('rollL').addEventListener('pointerdown', e => { e.preventDefault(); startRoll(-1); });
   document.getElementById('rollR').addEventListener('pointerdown', e => { e.preventDefault(); startRoll(1); });
 }
@@ -468,7 +544,7 @@ function fly() {
   if (ac && soundOn && ac.state === 'suspended') ac.resume();
 }
 function pause() {
-  st.flying = false; card.hidden = false; keys.clear(); st.boosting = false;
+  st.flying = false; card.hidden = false; keys.clear(); st.boosting = false; st.diveHeld = false;
   document.getElementById('cardTitle').textContent = 'Paused';
   document.getElementById('cardText').textContent = 'Press Fly to keep going. If your mouse doesn’t lock, hold the left button and drag to steer.';
   document.getElementById('fly').textContent = 'FLY';
@@ -497,12 +573,30 @@ function update(dt) {
   if (out > 0) { const home = Math.atan2(st.pos.z, -1500 - st.pos.x) / DEG; st.aimYaw += deltaAngle(st.aimYaw, home) * out * 1.6 * dt; }
   if (st.pos.y > 3400) st.aimPitch = Math.min(st.aimPitch, lerp(80, -10, smooth((st.pos.y - 3400) / 500)));
   warnEl.style.opacity = out > .15 ? 1 : 0;
+  // Power dive: tuck in and pull the aim (camera) toward a steep dive; release = slingshot pull-out.
+  const diving = st.diveHeld && !st.under, lookIdle = st.t - st.lookT > .35 && !ax && !ay;
+  st.dive += ((diving ? 1 : 0) - st.dive) * expA(diving ? S.diveBlend : S.diveBlend * .7, dt);
+  st.uwAmt += ((st.under ? 1 : 0) - st.uwAmt) * expA(5, dt);
+  st.burst = Math.max(0, st.burst - dt / 1.1);
+  st.pullOut = Math.max(0, st.pullOut - dt);
+  if (diving && st.aimPitch > S.diveP + 12) st.aimPitch += (S.diveP + 12 - st.aimPitch) * expA(3.2 * st.dive, dt);
+  else if (st.pullOut > 0) { if (!lookIdle) st.pullOut = 0; else if (st.aimPitch < S.pullPitch) st.aimPitch += (S.pullPitch - st.aimPitch) * expA(2.4, dt); }
+  else if (st.under && lookIdle) st.aimPitch += (clamp(st.pitch * .5, -30, 25) - st.aimPitch) * expA(2.5, dt);
   st.aimPitch = clamp(st.aimPitch, -80, 80);
+  let fp = st.aimPitch; // the pitch the dragon actually chases
+  if (st.under) {
+    st.uwT += dt; if (st.uwT >= S.uwMax) st.burstRise = true;
+    fp = lerp(fp, st.burstRise ? 70 : 55, st.burstRise ? 1 : smooth(st.uwT / (S.uwMax * .5)));
+  } else {
+    fp = lerp(fp, Math.min(fp, S.diveP), st.dive);
+    if (st.burst > 0) fp = Math.max(fp, S.burstPitch * smooth(st.burst * 1.6));
+  }
 
-  const resp = S.resp * (st.boosting ? .7 : 1) * lerp(.75, 1.15, smooth((st.speed - S.min) / S.cruise));
+  let resp = S.resp * (st.boosting ? .7 : 1) * lerp(.75, 1.15, smooth((st.speed - S.min) / S.cruise)) * lerp(1, S.diveSteer, st.dive);
+  if (st.under) resp *= st.burstRise ? 2.2 : 1.3;
   const a = expA(resp, dt);
   const ys = deltaAngle(st.yaw, st.aimYaw) * a;
-  st.yaw += ys; st.pitch += (st.aimPitch - st.pitch) * a;
+  st.yaw += ys; st.pitch += (fp - st.pitch) * a;
   st.yawRate = lerp(st.yawRate, ys / dt, expA(8, dt));
   const tb = clamp(-st.yawRate * S.bankPerYaw + inp.bank * 25, -S.maxBank, S.maxBank);
   st.bank = lerp(st.bank, tb, expA(4, dt));
@@ -510,10 +604,16 @@ function update(dt) {
   let target = inp.throttle >= 0 ? lerp(S.cruise, S.fast, inp.throttle) : lerp(S.cruise, S.slow, -inp.throttle), rec = S.recovery;
   if (st.boosting) { st.stam -= S.drain * dt; if (st.stam <= 0) { st.stam = 0; st.boosting = false; } target = S.boost; rec *= 2.2; }
   else st.stam = Math.min(S.maxStam, st.stam + S.regen * dt);
-  st.speed += (target - st.speed) * rec * (st.speed < target || st.boosting ? 1 : .6) * dt;
-  const ps = Math.sin(st.pitch * DEG);
-  st.speed -= ps * S.dive * (ps > 0 ? .55 : 1) * dt;
-  st.speed = clamp(st.speed, S.min, S.max);
+  rec *= lerp(1, S.diveDrag, st.dive);
+  const prevSpeed = st.speed;
+  if (st.under) st.speed += (S.swim * (st.burstRise ? 1.6 : 1) - st.speed) * expA(S.uwDrag, dt);
+  else {
+    st.speed += (target - st.speed) * rec * (st.speed < target || st.boosting ? 1 : .6) * dt;
+    const ps = Math.sin(st.pitch * DEG);
+    st.speed -= ps * S.dive * (ps > 0 ? .55 : lerp(1, S.diveGrav, st.dive)) * dt;
+  }
+  // Dive cap while diving; afterwards speed above max is kept (never grows) and bleeds off.
+  st.speed = clamp(st.speed, st.under ? 8 : S.min, diving ? S.diveMax : Math.max(S.max, Math.min(prevSpeed, S.diveMax)));
   st.beatTimer = Math.max(0, st.beatTimer - dt);
   st.vBoost = lerp(st.vBoost, 0, expA(2.2, dt));
   st.impactCd = Math.max(0, st.impactCd - dt);
@@ -528,10 +628,26 @@ function update(dt) {
   dir(st.yaw, st.pitch, fwd);
   right.set(Math.sin(st.yaw * DEG), 0, Math.cos(st.yaw * DEG));
   vel.copy(fwd).multiplyScalar(st.speed).addScaledVector(UP, st.vBoost).addScaledVector(right, dodge);
+  if (st.under) {
+    st.buoyV = Math.min(st.buoyV + S.buoy * dt, 42);
+    if (st.burstRise) st.buoyV = lerp(st.buoyV, 70, expA(5, dt));
+    vel.addScaledVector(UP, st.buoyV);
+  }
   st.pos.addScaledVector(vel, dt);
 
-  // Collision: skim and deflect off terrain and water.
-  const gh = heightAt(st.pos.x, st.pos.z), floor = Math.max(gh, 0) + 3.2;
+  // Water: a steep, fast hit (or a power dive) plunges under; shallow contact still skims below.
+  const gh = heightAt(st.pos.x, st.pos.z), sea = gh < 0;
+  if (!st.under && sea && st.pos.y < 3.3 && st.ignore <= 0 && ((st.pitch < S.plungePitch && st.speed > S.plungeSpeed) || (diving && st.pitch < -10))) enterWater();
+  if (st.under) {
+    if (st.pos.y < -1.5) st.submerged = true;
+    if ((st.submerged && st.pos.y > 0) || (!st.submerged && st.uwT > .6)) exitWater();
+  } else if (st.ignore > 0) {
+    st.ignore -= dt;
+    if (st.pos.y < -1.5 && sea) enterWater();
+    else if (st.ignore <= 0 && st.pos.y < 3.8) st.ignore = .05; // still at the surface; keep ignoring it a moment
+  }
+  // Collision: skim and deflect off terrain and water (the sea surface is ignored while plunging / just after).
+  const floor = (st.under || st.ignore > 0 ? gh : Math.max(gh, 0)) + 3.2;
   if (st.pos.y < floor) {
     st.pos.y = floor;
     const n = gh > 0 ? new THREE.Vector3(heightAt(st.pos.x - 8, st.pos.z) - heightAt(st.pos.x + 8, st.pos.z), 16, heightAt(st.pos.x, st.pos.z - 8) - heightAt(st.pos.x, st.pos.z + 8)).normalize() : UP.clone();
@@ -544,6 +660,25 @@ function update(dt) {
   dragon.rotation.set((st.bank + st.roll) * DEG, st.yaw * DEG, st.pitch * DEG);
 }
 
+function enterWater() {
+  st.under = true; st.submerged = false; st.burstRise = false; st.uwT = 0; st.buoyV = 0; st.vBoost = 0; st.pullOut = 0; st.boosting = false; st.ignore = 0;
+  dir(st.yaw, st.pitch, fwd);
+  emitSplash(st.pos.x, st.pos.z, st.speed / 85, false, fwd.x, fwd.z);
+  st.shake = .7; st.speed *= .82; whoosh(.9); thump();
+  st.lagHold = .45; st.lagRate = .5; st.lagMax = 35; // camera hangs above the splash a beat before following
+}
+function exitWater() {
+  st.under = false; st.burstRise = false;
+  st.speed = Math.max(st.speed + S.burstGain, S.burstMin);
+  st.pitch = Math.max(st.pitch, S.burstPitch);
+  st.vBoost = S.burstLift + Math.max(0, st.buoyV * .4); st.buoyV = 0;
+  st.aimPitch = 12; st.pullOut = 1.4; st.ignore = .6; st.burst = 1; st.uwAmt = 0;
+  st.shake = .8; st.flapInt = 1.9; st.flap = Math.PI / 2; st.beatTimer = .5;
+  st.lagHold = .5; st.lagRate = 5; st.lagMax = 25;
+  dir(st.yaw, st.pitch, fwd);
+  emitSplash(st.pos.x, st.pos.z, 1.7, true, fwd.x, fwd.z); whoosh(.9); thump();
+}
+
 // ---------------------------------------------------------------- animation (port of UpdateAnimation)
 function animate(dt) {
   const diving = st.pitch < -18 && inp.throttle <= 0 && !st.boosting;
@@ -553,47 +688,65 @@ function animate(dt) {
   if (st.boosting) { rate = 1.9; inten = 1.15; }
   if (diving) inten = .08;
   if (st.beatTimer > 0) rate = 2.3;
+  // Tucked dive / underwater: wings stop beating (a slow swim stroke under water).
+  inten = lerp(inten, 0, st.dive);
+  if (st.uwAmt > .01) { rate = lerp(rate, .7, st.uwAmt); inten = lerp(inten, .35, st.uwAmt); }
   st.flapInt = lerp(st.flapInt, inten, expA(st.beatTimer > 0 ? 1 : 2.5, dt));
   st.flap = (st.flap + 2 * Math.PI * rate * dt) % (2 * Math.PI);
   const f = Math.sin(st.flap);
   const sweep = Math.min(45, 38 * (smooth((st.speed - S.fast) / (S.boost - S.fast)) + (diving ? .7 : 0)));
-  const shoulder = 6 + f * 40 * st.flapInt, wrist = (diving ? -10 : 4) + Math.sin(st.flap - 1) * 30 * st.flapInt;
+  let shSweep = sweep, tipSweep = sweep * .4, shoulder = 6 + f * 40 * st.flapInt, wrist = (diving ? -10 : 4) + Math.sin(st.flap - 1) * 30 * st.flapInt;
+  // Fully tucked pose (DiveAmount): arms swept hard back, fingers folded back, wings flat and tight. Burst: flung wide.
+  const tuck = Math.max(st.dive, st.uwAmt * .75);
+  shSweep = lerp(shSweep, 66, tuck); tipSweep = lerp(tipSweep, 30, tuck);
+  shoulder = lerp(shoulder, 3 + f * 12 * st.flapInt, tuck) + st.burst * 22; wrist = lerp(wrist, -6, tuck);
+  shSweep *= 1 - st.burst * .8;
   for (const sd of [-1, 1]) {
-    wings[sd].sh.rotation.set(-sd * shoulder * DEG, sd * -sweep * DEG, 0);
-    wings[sd].tip.rotation.set(-sd * wrist * DEG, sd * -sweep * .4 * DEG, 0);
+    wings[sd].sh.rotation.set(-sd * shoulder * DEG, sd * -shSweep * DEG, 0);
+    wings[sd].tip.rotation.set(-sd * wrist * DEG, sd * -tipSweep * DEG, 0);
   }
   body.position.y = -Math.cos(st.flap) * .22 * st.flapInt;
   body.rotation.z = Math.cos(st.flap) * 2 * st.flapInt * DEG;
-  neck.rotation.set(0, clamp(st.yawRate * .12, -18, 18) * DEG, (Math.sin(st.t * .9) * 3 - st.pitch * .08) * DEG);
-  tail.forEach((g, i) => g.rotation.set(0, (Math.sin(st.t * 1.6 - i * .6) * (3 + i * 1.2) + clamp(st.yawRate * .05, -8, 8)) * DEG, (Math.sin(st.t * 1.1 - i * .5) * 2.5 + st.pitch * .04) * DEG));
+  const calm = 1 - .75 * st.dive;
+  neck.rotation.set(0, clamp(st.yawRate * .12, -18, 18) * DEG, (Math.sin(st.t * .9) * 3 * calm - st.pitch * .08 - st.dive * 12) * DEG);
+  tail.forEach((g, i) => g.rotation.set(0, (Math.sin(st.t * (1.6 + st.uwAmt * 2) - i * .6) * (3 + i * 1.2) * (calm + st.uwAmt * 1.5) + clamp(st.yawRate * .05, -8, 8)) * DEG, (Math.sin(st.t * 1.1 - i * .5) * 2.5 + st.pitch * .04) * calm * DEG));
   const s01 = smooth((st.speed - S.slow) / (S.boost - S.slow));
   updateCape(st.t, s01);
   rider.rotation.z = -s01 * .12; // lean into the wind
 }
 
 // ---------------------------------------------------------------- camera (port of UpdateCamera + spring arm lag)
-const camFwd = new THREE.Vector3(), camTarget = new THREE.Vector3(), look = new THREE.Vector3();
+const camFwd = new THREE.Vector3(), camTarget = new THREE.Vector3(), look = new THREE.Vector3(), murkEl = document.getElementById('murk');
 let arm = S.arm;
 function updateCamera(dt) {
   st.camYaw += deltaAngle(st.camYaw, st.aimYaw) * expA(11, dt);
   st.camPitch += (st.aimPitch - st.camPitch) * expA(11, dt);
-  const s01 = smooth((st.speed - S.slow) / (S.boost - S.slow));
-  camera.fov = lerp(camera.fov, lerp(S.fov, S.fovMax, Math.pow(s01, 1.3)), expA(2.5, dt));
-  arm = lerp(arm, S.arm + S.armExtra * s01, expA(2, dt));
+  const s01 = smooth((st.speed - S.slow) / (S.boost - S.slow)), over01 = smooth((st.speed - S.boost) / (S.diveMax - S.boost));
+  const fovT = lerp(S.fov, S.fovMax, Math.pow(s01, 1.3)) + S.diveFov * st.dive * (.35 + .65 * over01) + st.burst * 10 - st.uwAmt * 8;
+  camera.fov = lerp(camera.fov, fovT, expA(2.5 + st.burst * 3, dt));
+  arm = lerp(arm, (S.arm + S.armExtra * s01) * lerp(1, S.diveArm, st.dive) * lerp(1, .6, st.uwAmt), expA(2, dt));
   dir(st.camYaw, st.camPitch, camFwd);
-  camTarget.copy(st.pos).addScaledVector(camFwd, -arm).addScaledVector(UP, S.socket);
-  st.camPos.lerp(camTarget, expA(9, dt));
-  if (st.camPos.distanceTo(camTarget) > 9) st.camPos.sub(camTarget).setLength(9).add(camTarget);
-  const g = Math.max(heightAt(st.camPos.x, st.camPos.z), 0) + 4;
+  camTarget.copy(st.pos).addScaledVector(camFwd, -arm).addScaledVector(UP, lerp(S.socket, 1.6, st.uwAmt));
+  st.lagHold = Math.max(0, st.lagHold - dt);
+  const lagRate = st.lagHold > 0 ? st.lagRate : 9, lagMax = st.lagHold > 0 ? st.lagMax : 9;
+  st.camPos.lerp(camTarget, expA(lagRate, dt));
+  if (st.camPos.distanceTo(camTarget) > lagMax) st.camPos.sub(camTarget).setLength(lagMax).add(camTarget);
+  const gc = heightAt(st.camPos.x, st.camPos.z), g = (st.under ? gc : Math.max(gc, 0)) + 4;
   if (st.camPos.y < g) st.camPos.y = g;
   st.shake = Math.max(0, st.shake - dt);
-  const amp = (s01 * s01 * .05 + st.shake * .45);
+  const amp = (s01 * s01 * .05 + st.shake * .45 + st.dive * (.03 + .16 * over01) + st.burst * .1);
   camera.position.copy(st.camPos).add(new THREE.Vector3((Math.sin(st.t * 31) + .5 * Math.sin(st.t * 17.3)) * amp, Math.cos(st.t * 27) * amp, Math.sin(st.t * 23) * amp));
   look.copy(st.pos).addScaledVector(camFwd, 30);
   camera.lookAt(look);
   camera.rotateZ(-st.bank * .12 * DEG);
   camera.updateProjectionMatrix();
   sky.position.copy(camera.position);
+  // Underwater look: murky tint overlay + thick blue-green fog while the camera is below the surface.
+  st.uwView = clamp(st.uwView + (camera.position.y < -.1 ? 1 : -1) * dt * 6, 0, 1);
+  const u = st.uwView;
+  scene.fog.color.copy(FOG).lerp(WATER_FOG, u); scene.fog.density = lerp(.000085, .045, u * u);
+  sky.visible = u < .5; scene.background = u >= .5 ? WATER_FOG : null;
+  murkEl.style.opacity = u.toFixed(3);
   sunLight.position.copy(st.pos).addScaledVector(SUN, 1000); sunLight.target.position.copy(st.pos);
   // Wind streaks: recycle points around the camera, brighter with speed.
   streakMat.opacity = smooth((st.speed - 50) / 50) * .55;
@@ -613,11 +766,15 @@ function updateCamera(dt) {
 
 // ---------------------------------------------------------------- HUD + loop
 const speedEl = document.getElementById('speed'), altEl = document.getElementById('alt'), stamEl = document.getElementById('stam'), stamBar = stamEl.querySelector('i');
+const diveEl = document.getElementById('dive'), underEl = document.getElementById('under'), underTxt = document.getElementById('underTxt'), breathBar = document.querySelector('#breath i');
 let hudT = 0;
 function hud(dt) {
   if ((hudT += dt) < .08) return; hudT = 0;
   speedEl.firstChild.nodeValue = Math.round(st.speed * 3.6);
-  altEl.textContent = 'ALT ' + Math.round(st.pos.y) + ' M';
+  altEl.textContent = st.under ? 'DEPTH ' + Math.round(-Math.min(st.pos.y, 0)) + ' M' : 'ALT ' + Math.round(st.pos.y) + ' M';
+  diveEl.style.opacity = st.under ? 0 : (st.dive * (.75 + .25 * Math.sin(st.t * 12))).toFixed(2);
+  underEl.style.opacity = st.under ? 1 : 0;
+  if (st.under) { underTxt.textContent = Math.round(-Math.min(st.pos.y, 0)) + ' M · ' + (isTouch ? 'WING BEAT' : 'SPACE') + ' TO BURST OUT'; breathBar.style.width = (clamp(1 - st.uwT / S.uwMax, 0, 1) * 100).toFixed(1) + '%'; }
   stamBar.style.width = (st.stam / S.maxStam * 100).toFixed(1) + '%';
   stamEl.classList.toggle('hot', st.boosting);
 }
@@ -631,7 +788,7 @@ function frame(now) {
     dir(st.yaw, st.pitch, fwd); st.pos.addScaledVector(fwd, st.speed * dt * .25); dragon.position.copy(st.pos);
     dragon.rotation.set(0, st.yaw * DEG, st.pitch * DEG);
   }
-  animate(dt); updateCamera(dt); hud(dt);
+  animate(dt); updateCamera(dt); updateSplash(dt); hud(dt);
   renderer.render(scene, camera);
   requestAnimationFrame(frame);
 }
