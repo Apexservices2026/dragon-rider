@@ -39,8 +39,10 @@ def log(msg):
 world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_world()
 if not world or world.get_path_name().split('.')[0] != LEVEL:
     levels.load_level(LEVEL)
+removed_pkgs = []
 for a in actors.get_all_level_actors():
     if str(a.get_folder_path()) in FOLDERS:
+        removed_pkgs.append(a.get_package())
         actors.destroy_actor(a)
 
 
@@ -180,7 +182,7 @@ def build_village(name, cx, cy, clan, n_huts, n_ships):
 
     # Longhouse first, doors (+Y) toward the water.
     door_yaw = sea_deg - 90
-    lh = site('SM_Longhouse', 0, 2600, door_yaw, 260)
+    lh = site('SM_Longhouse', 0, 4500, door_yaw, 60) or site('SM_Longhouse', 0, 2600, door_yaw, 260)
     if not lh:
         log('%s: no longhouse site' % name)
         return None
@@ -188,7 +190,8 @@ def build_village(name, cx, cy, clan, n_huts, n_ships):
     a.set_editor_property('tags', [unreal.Name(tag), unreal.Name('DragonVillage')])
     for i in range(n_huts):
         kind = ['SM_Hut', 'SM_Hut', 'SM_Storehouse', 'SM_Smithy', 'SM_Hut'][i % 5]
-        s = site(kind, 1500, 4300, sea_deg - 90 + rng.uniform(-40, 40), 170) or site(kind, 1500, 6000, sea_deg - 90, 220)
+        s = (site(kind, 1500, 5000, sea_deg - 90 + rng.uniform(-40, 40), 45) or
+             site(kind, 1500, 4300, sea_deg - 90 + rng.uniform(-40, 40), 170) or site(kind, 1500, 6000, sea_deg - 90, 220))
         if s:
             sc = rng.uniform(0.9, 1.1) if kind == 'SM_Hut' else 1.0
             place(kind, s[0], s[1], s[2], s[3], '%s_%s%d' % (name, kind[3:], i), scale=sc)
@@ -269,7 +272,13 @@ VILLAGES = []
 if 'village' in I.get('main', {}).get('pois', {}):
     VILLAGES.append((I['main']['pois']['village'], 'A', 5, 2))
 if 'village' in I.get('forest', {}).get('pois', {}):
-    VILLAGES.append((I['forest']['pois']['village'], 'B', 4, 1))
+    v = dict(I['forest']['pois']['village'])
+    lm = os.path.join(GEN, 'landmarks.json')
+    if os.path.exists(lm):
+        site = json.load(open(lm)).get('forest_village')   # flatter site picked by pick_landmark_sites.py
+        if site:
+            v.update(x=site['x'], y=site['y'])
+    VILLAGES.append((v, 'B', 4, 1))
 for v, clan, huts, ships in VILLAGES:
     if not build_village(v['name'], v['x'] * 100.0, v['y'] * 100.0, clan, huts, ships):
         log('village %s could not be placed' % v['name'])
@@ -344,9 +353,27 @@ if first_ship:
         'FollowShip:6000,3200,4500')])
     log('fleet review leg %d behind %s' % (legs_n, first_ship.get_actor_label()))
 
+# Review leg: the forest village (Lundvik) seen from the sea in front of its longhouse.
+for act in actors.get_all_level_actors():
+    if act.get_actor_label() == 'Lundvik_Longhouse':
+        p = act.get_actor_location()
+        rv = act.get_actor_right_vector()   # doors (+Y) face the water
+        loc = unreal.Vector(p.x + rv.x * 16000.0, p.y + rv.y * 16000.0, p.z + 4500.0)
+        m = actors.spawn_actor_from_class(unreal.TargetPoint, loc, unreal.Rotator(0, 0, 0))
+        m.set_actor_label('Review_%02d_forest_village_close' % (legs_n + 1))
+        m.set_folder_path('Archipelago/Villages')
+        m.set_editor_property('tags', [unreal.Name(t) for t in (
+            'ReviewLeg:%02d' % (legs_n + 1), 'Name:forest_village_close', 'Dur:5.0', 'Shots:3.5', 'Pitch:-14.0', 'Speed:40',
+            'AimAt:%.0f,%.0f,%.0f' % (p.x, p.y, p.z + 300.0))])
+        break
+
 always_loaded()
-if not levels.save_current_level():
-    raise RuntimeError('Level save failed')
-unreal.EditorLoadingAndSavingUtils.save_dirty_packages(True, True)
+# Save only this script's actor packages (and the ones it removed) plus new actor-folder objects, never the
+# landscapes: every landscape rewrite costs ~200 MB of Git LFS.
+own = [a.get_package() for a in actors.get_all_level_actors() if str(a.get_folder_path()) in FOLDERS]
+own += removed_pkgs
+own += [p for p in unreal.EditorLoadingAndSavingUtils.get_dirty_content_packages() if '__ExternalObjects__' in p.get_path_name()]
+if not unreal.EditorLoadingAndSavingUtils.save_packages(own, False):
+    raise RuntimeError('Saving village/fleet actors failed')
 log('%d villages, %d fleet ships' % (len(VILLAGES), fleet))
 unreal.log('PLACE_ARCHIPELAGO_DONE')

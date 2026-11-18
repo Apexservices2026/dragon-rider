@@ -126,14 +126,16 @@ void ALongshipActor::BeginPlay()
 		for (UStaticMeshComponent* C : WakeParts) { C->SetMaterial(0, Foam); }
 		for (UStaticMeshComponent* C : BowWave) { C->SetMaterial(0, Foam); }
 	}
-	// Find the sea plane so the land check ignores it (same rule as the dragon: huge BasicShapes Plane at Z=0).
+	// Find the sea planes so the land check ignores them (huge BasicShapes Planes near Z=0: the sea itself, and in the
+	// archipelago the far-ocean skirt just below it, which the check otherwise reads as land 0.8 m down).
 	for (TActorIterator<AStaticMeshActor> It(GetWorld()); It; ++It)
 	{
 		UStaticMeshComponent* SM = It->GetStaticMeshComponent();
-		if (SM && SM->GetStaticMesh() && SM->GetStaticMesh()->GetName() == TEXT("Plane") && FMath::Abs(It->GetActorLocation().Z) < 50.f)
+		if (SM && SM->GetStaticMesh() && SM->GetStaticMesh()->GetName() == TEXT("Plane") && FMath::Abs(It->GetActorLocation().Z) < 200.f
+			&& It->GetActorScale3D().X > 100.f)
 		{
-			WaterComponent = SM;
-			break;
+			if (!WaterComponent && FMath::Abs(It->GetActorLocation().Z) < 50.f) { WaterComponent = SM; }
+			SeaPlanes.Add(SM);
 		}
 	}
 }
@@ -142,10 +144,15 @@ bool ALongshipActor::LandAhead() const
 {
 	const FVector Ahead = GetActorLocation() + GetActorForwardVector() * LandCheckAhead;
 	FCollisionQueryParams Params(SCENE_QUERY_STAT(LongshipLand), true, this);
-	if (WaterComponent) { Params.AddIgnoredComponent(WaterComponent.Get()); }
+	for (const TObjectPtr<UPrimitiveComponent>& Sea : SeaPlanes) { Params.AddIgnoredComponent(Sea.Get()); }
 	FHitResult Hit;
 	const bool bHit = GetWorld()->LineTraceSingleByChannel(Hit, Ahead + FVector(0, 0, 50000.f), Ahead - FVector(0, 0, 3000.f), ECC_Visibility, Params);
-	return bHit && Hit.ImpactPoint.Z > -900.f; // shallower than 9 m: we're about to run aground
+	const bool bLand = bHit && Hit.ImpactPoint.Z > -900.f; // shallower than 9 m: we're about to run aground
+	if (bLand)
+	{
+		UE_LOG(LogTemp, Display, TEXT("LONGSHIP %s land ahead: hit %s at z=%.0f"), *GetName(), Hit.GetActor() ? *Hit.GetActor()->GetName() : TEXT("?"), Hit.ImpactPoint.Z);
+	}
+	return bLand;
 }
 
 void ALongshipActor::UpdateOars(float T)
@@ -219,6 +226,7 @@ void ALongshipActor::Tick(float DeltaSeconds)
 			if (LandAhead())
 			{
 				// Loop back far out along the track; hide the old wake so it doesn't streak across the sea.
+				UE_LOG(LogTemp, Display, TEXT("LONGSHIP %s land ahead at %s: back to the start of its route"), *GetName(), *GetActorLocation().ToString());
 				SetActorLocation(bReturnToStart ? StartLocation : GetActorLocation() - GetActorForwardVector() * LoopDistance);
 				for (FWakeBlob& B : Wake) { B.Age = WakeLife; }
 			}

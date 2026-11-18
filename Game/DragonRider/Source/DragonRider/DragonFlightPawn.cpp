@@ -467,6 +467,8 @@ void ADragonFlightPawn::StartReviewLeg(int32 Index)
 			L.Location = Best->GetActorLocation() - Fwd * L.FollowOffset.X + Right * L.FollowOffset.Y + FVector(0.f, 0.f, L.FollowOffset.Z);
 			L.AimAt = Best->GetActorLocation() + Fwd * 1500.f;
 			L.bAimAt = true;
+			UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW follow ship %s at %s yaw %.0f hidden=%d"), *Best->GetName(), *Best->GetActorLocation().ToString(),
+				Best->GetActorRotation().Yaw, Best->IsHidden() ? 1 : 0);
 		}
 	}
 	if (bUnderwater) { bUnderwater = false; bBurstRising = false; }

@@ -51,6 +51,10 @@ Git Bash mangles `/Game/...` paths, so don't run these from Git Bash.
 3. `tools/import_dragon.py`: rebuilds `/Game/DragonRider/Characters/`.
 4. `tools/build_opening_level.py`: rebuilds `/Game/DragonRider/Opening/` (terrain, sky, water, start point), then runs `tools/place_world.py` to place the villages and fleet.
 5. `tools/build_archipelago.py`: rebuilds `/Game/DragonRider/Archipelago/` (World Partition level, one Landscape per island, auto landscape material, sky, sea, start point, review route), then runs `tools/place_archipelago.py` (villages, fleet). It needs the C++ editor module `DragonRiderEditor` built (it creates the landscapes), and the commandlet must be run with `-AllowCommandletRendering` (the landscape heights are merged on the GPU).
+6. Island landmarks (Vertex's kit from `tools/blender/world/build_landmarks.py`):
+   - `tools/import_landmarks.py` imports them into `/Game/DragonRider/World/Landmarks`.
+   - `python -I tools/terrain/pick_landmark_sites.py` picks the sites and writes `Saved/Generated/Archipelago/landmarks.json`.
+   - `tools/place_landmarks.py` places them in `Lvl_Archipelago`. It only adds and removes its own actors; it never rebuilds the landscapes.
 
 Each of these scripts deletes and recreates **only its own folder**.
 

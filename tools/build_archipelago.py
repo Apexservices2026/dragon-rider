@@ -261,9 +261,11 @@ MIS = {
                        dict(RockColor=(0.045, 0.047, 0.052), RockColorWarm=(0.06, 0.058, 0.058), GrassColor=(0.05, 0.06, 0.03),
                             SnowColor=(0.74, 0.8, 0.88))),
     'ember': make_mi('MI_Land_Ember', dict(SnowLineCm=1e7, GrassTopCm=25000.0, GrassFlatness=0.9, SandTopCm=600.0,
-                                          LavaGlow=(2.0 if ember_c else 0.0),
-                                          LavaRadiusCm=(ember_c['lava_radius'] * 100.0 + 2000.0) if ember_c else 0.0,
-                                          LavaTopCm=(ember_c['z'] * 100.0 + 1200.0) if ember_c else 0.0),
+                                          LavaGlow=(1.5 if ember_c else 0.0),
+                                          # a 200 m lake whose edge follows the floor's bumps (glow below floor + 10 m);
+                                          # tools/place_landmarks.py sets the same values and puts the dragon lair beside it
+                                          LavaRadiusCm=20000.0 if ember_c else 0.0,
+                                          LavaTopCm=(ember_c['z'] * 100.0 + 1000.0) if ember_c else 0.0),
                      dict(RockColor=(0.022, 0.02, 0.02), RockColorWarm=(0.06, 0.03, 0.02), SandColor=(0.018, 0.017, 0.017),
                           GrassColor=(0.04, 0.045, 0.02), HeathColor=(0.05, 0.035, 0.025),
                           LavaCentre=((ember_c['x'] * 100.0, ember_c['y'] * 100.0, 0.0) if ember_c else (0, 0, 0)))),
@@ -360,6 +362,7 @@ far = spawn(unreal.StaticMeshActor, (0, 0, -80), label='FarOcean', folder='Archi
 far.static_mesh_component.set_static_mesh(eal.load_asset('/Engine/BasicShapes/Plane'))
 far.static_mesh_component.set_material(0, fm)
 far.static_mesh_component.set_collision_enabled(unreal.CollisionEnabled.NO_COLLISION)
+far.static_mesh_component.set_collision_profile_name('NoCollision')   # (the enable flag alone didn't stick: longships' land check hit it)
 far.static_mesh_component.set_editor_property('cast_shadow', False)
 far.set_actor_scale3d(unreal.Vector(400000, 400000, 1))      # 400 km skirt out to the fogged horizon
 

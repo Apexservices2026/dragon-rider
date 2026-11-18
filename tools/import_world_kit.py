@@ -183,7 +183,9 @@ def fbx_options():
     sd.normal_import_method = unreal.FBXNormalImportMethod.FBXNIM_IMPORT_NORMALS_AND_TANGENTS
     return ui
 
-fbx_files = sorted(f for f in os.listdir(SRC) if f.lower().endswith('.fbx'))
+# The island landmark kit shares this folder; tools/import_landmarks.py imports it into World/Landmarks.
+landmark_fbx = {p['fbx'] for p in manifest.get('landmarks', {}).get('props', [])}
+fbx_files = sorted(f for f in os.listdir(SRC) if f.lower().endswith('.fbx') and f not in landmark_fbx)
 for fbx in fbx_files:
     name = os.path.splitext(fbx)[0]
     mesh = run_import(os.path.join(SRC, fbx), MESH, name, fbx_options())

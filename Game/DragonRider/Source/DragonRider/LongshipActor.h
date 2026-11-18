@@ -67,6 +67,7 @@ private:
 	UPROPERTY() TObjectPtr<UStaticMesh> SailB;
 	UPROPERTY() TObjectPtr<UMaterialInterface> FoamBase;
 	UPROPERTY() TObjectPtr<UPrimitiveComponent> WaterComponent;
+	UPROPERTY() TArray<TObjectPtr<UPrimitiveComponent>> SeaPlanes;
 
 	struct FWakeBlob { FVector Pos = FVector::ZeroVector; float Age = 100.f; float Yaw = 0.f; float Side = 1.f; };
 	TArray<FWakeBlob> Wake;
