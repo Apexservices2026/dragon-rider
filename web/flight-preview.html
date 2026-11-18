@@ -392,10 +392,9 @@ function loadModels() {
     loadMsg.textContent = 'Loading dragon… ' + (b ? Math.min(99, Math.round(a / b * 100)) + '%' : (a / 1e6).toFixed(1) + ' MB');
   };
   const get = (url, key) => new Promise((res, rej) => loader.load(url, res, onProg(key), rej));
-  const getRider = () => get('./Rider.gltf.json', 'r').catch(e => { console.warn('Rider.glb failed; using the simple rider', e); return null; });
+  // One published model: DragonRider.gltf.json (dragon + RiderRig on the Saddle bone). If it fails, the primitive dragon and rider stay.
   get('./DragonRider.gltf.json', 'c')
-    .then(g => g.scene.getObjectByName('RiderRig') ? [g, g] : getRider().then(r => [g, r]),
-      () => { delete prog.c; return Promise.all([get('./Dragon.gltf.json', 'd'), getRider()]); })
+    .then(g => [g, g.scene.getObjectByName('RiderRig') ? g : null])
     .then(([d, r]) => { setupModels(d, r); loadMsg.hidden = true; })
     .catch(e => { console.warn('Dragon model failed to load; keeping the simple dragon', e); loadMsg.textContent = 'Couldn’t load the dragon model, so you’re flying the simple stand-in.'; });
 }

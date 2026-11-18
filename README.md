@@ -1,26 +1,51 @@
 # Dragon Rider
 
-Unreal Engine 5.8 Viking fantasy action-adventure, with dragon flight as the core mechanic. Target: realistic cinematic Nordic landscapes and exciting, responsive flight.
+An Unreal Engine 5.8 Viking fantasy action-adventure where dragon flight is the core mechanic. You start as a Viking riding a dragon over a Nordic fjord at golden hour. ("Dragon Rider" is a working title.)
 
-## Current prototype (Claude, Nov 18 2026)
+## What's playable now
 
-The game now opens in `Lvl_Opening`: you ride a dragon (C++ `ADragonFlightPawn`) over a Blender-generated Nordic fjord at golden hour. Controls: mouse steer, W/S speed, A/D bank, Space wing beat, Shift boost, Q/E barrel roll. Play from the editor or run `tools/Review-Opening.ps1` for an automated screenshot flight. The project now has C++ code: build it with Visual Studio 2026 (or let Unreal rebuild it when the .uproject opens).
+- **Dragon flight** (C++ `ADragonFlightPawn`): mouse aim with banking turns, dive/climb energy, wing beats, boost with stamina, barrel rolls.
+- **Power dive** into the sea: plunge under water, then burst back out.
+- **Rigged dragon and Viking rider**, made in Blender, with glide / flap / hover / dive-tuck / wing-beat animation blended by flight state.
+- **A 16 km fjord** with three clan villages (Skerholm, Fjordmunn, Innvik) and a longship fleet rowing in from the sea.
 
-## Earlier Codex prototype
-
-A six-gate flight course with a native DefaultPawn-derived flying sphere, tuned acceleration/braking, and a third-person spring-arm camera. This is a graybox movement foundation, not finished dragon gameplay. No dragon art, wing animation, mount/dismount, combat, banking, or missions yet.
+**Controls:** mouse steer · W/S faster/slower · A/D bank · Space wing beat (and burst out from under water) · Shift boost · Ctrl or right mouse power dive · Q/E barrel roll. A gamepad is mapped but untested.
 
 ## Open and play (Windows)
 
-1. Clone this repository with Git LFS installed, checkout `codex/shared-prototype`, and run `git lfs pull`.
-2. Open `Game/DragonRider/DragonRider.uproject` with Unreal Engine 5.8. The saved engine association is machine-specific; select your installed 5.8 version if prompted.
-3. In Content > DragonRider, open `Lvl_FlightPrototype`, then press Play and click the viewport.
-4. Mouse steers; W/S forward/back, A/D strafe, Space/E rise, Ctrl/Q descend. Release movement keys to brake. Escape ends editor Play mode. Close the window to end a standalone run.
+1. Install Unreal Engine 5.8, Visual Studio 2026 (C++ game workload) and Git LFS.
+2. Clone this repository and run `git lfs pull`. The default branch is `claude/dragon-flight`.
+3. Open `Game/DragonRider/DragonRider.uproject`. Unreal will offer to build the C++ module; say yes. Select your UE 5.8 install if it asks.
+4. The editor opens on `Lvl_Opening`. Press Play.
 
-On the original development PC, `tools/Play-FlightPrototype.ps1` launches the standalone test using the installed UE 5.8 path. This is an editor-based prototype, not a packaged executable.
+There are also two scripts:
+- `tools/Play-DragonRider.ps1` launches the game in a window without the editor.
+- `tools/Review-Opening.ps1` flies a scripted route and saves screenshots to `Game/DragonRider/Saved/Screenshots/`.
 
-## Continue development
+A browser version of the flight (three.js, same tuning) is in `web/flight-preview.html`.
 
-Read `AGENTS.md` and `notes/handoff.md` first. They describe verified progress, limitations, and next steps for Codex and Claude. The editable Unreal assets are stored with Git LFS; source scripts are in `tools`. Do not rerun builder scripts against existing assets: they intentionally refuse to replace them.
+## Rebuilding generated content
 
-Target PC: Ryzen 5 7600X, Radeon RX 7700 XT 12 GB, 16 GB RAM. Rendering, input playtests, and Unreal asset edits require the Windows Unreal desktop; cloud work can review scripts and documentation.
+Generated content is rebuilt by scripts. Run each Unreal step as a commandlet from **PowerShell**:
+
+```
+UnrealEditor-Cmd.exe <uproject> -run=pythonscript -script=<script>
+```
+
+Git Bash mangles `/Game/...` paths, so don't run these from Git Bash.
+
+1. **Blender** (headless, `blender -b -P <script>`):
+   - `tools/blender/gen_fjord_terrain.py`: terrain FBX.
+   - `tools/blender/dragon/` (`build_dragon.py`, `build_rider.py`, `export.py`): the dragon and rider.
+   - `tools/blender/world/build_props.py`: the Viking prop kit.
+
+   The output goes to `Game/DragonRider/Saved/Generated/`. That folder is not in Git.
+2. `tools/import_world_kit.py`: rebuilds `/Game/DragonRider/World/`.
+3. `tools/import_dragon.py`: rebuilds `/Game/DragonRider/Characters/`.
+4. `tools/build_opening_level.py`: rebuilds `/Game/DragonRider/Opening/` (terrain, sky, water, start point), then runs `tools/place_world.py` to place the villages and fleet.
+
+Each of these scripts deletes and recreates **only its own folder**.
+
+The older Codex builder scripts (`tools/build_flight_*.py`) refuse to overwrite their assets. Leave them alone.
+
+Epic's Third Person template content is not included; see `NOTICES.md`. Project history, decisions and next steps are in `notes/handoff.md`.

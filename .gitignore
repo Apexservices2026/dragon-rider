@@ -25,3 +25,7 @@ Game/DragonRider/Content/Characters/
 Game/DragonRider/Content/LevelPrototyping/
 Game/DragonRider/Content/Input/
 Game/DragonRider/Content/ThirdPerson/
+
+# Orphaned external actors of the template level Lvl_ThirdPerson
+Game/DragonRider/Content/__ExternalActors__/ThirdPerson/
+Game/DragonRider/Content/__ExternalObjects__/ThirdPerson/

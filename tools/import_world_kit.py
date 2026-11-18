@@ -105,6 +105,8 @@ log('imported %d textures for %d texture sets' % (len(textures), len(sets)))
 def make_master(name, is_two_sided, sample):
     m = tools.create_asset(name, MAT, unreal.Material, unreal.MaterialFactoryNew())
     m.set_editor_property('two_sided', is_two_sided)
+    # The kit meshes are Nanite, so the masters must allow Nanite or cooked builds fall back to the default material.
+    m.set_editor_property('used_with_nanite', True)
     bc_s, n_s, r_s = sample
 
     def tex_param(pname, tex, sampler, y):

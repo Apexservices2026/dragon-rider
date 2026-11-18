@@ -69,18 +69,8 @@ ADragonFlightPawn::ADragonFlightPawn()
 	Rider->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Rider->SetupAttachment(BodyRoot);
 	Rider->SetRelativeLocation(FVector(95.f, 0.f, 62.f));
-	Rider->SetRelativeRotation(FRotator(0.f, -90.f, 0.f)); // UE mannequins face +Y
-	Rider->SetRelativeScale3D(FVector(1.05f));
-	static ConstructorHelpers::FObjectFinderOptional<USkeletalMesh> RiderMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
-	static ConstructorHelpers::FObjectFinderOptional<UAnimSequence> RiderIdle(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle"));
-	if (RiderMesh.Get()) { Rider->SetSkeletalMesh(RiderMesh.Get()); }
-	if (RiderIdle.Get())
-	{
-		Rider->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-		Rider->AnimationData.AnimToPlay = RiderIdle.Get();
-		Rider->AnimationData.bSavedLooping = true;
-		Rider->AnimationData.bSavedPlaying = true;
-	}
+	// The rider mesh (SK_Rider, from tools/import_dragon.py) is assigned in BeginPlay. There is no
+	// template-mannequin fallback any more: Epic's template content is not part of this repository.
 
 	CameraBoom = CreateDefaultSubobject<USpringArmComponent>(TEXT("CameraBoom"));
 	CameraBoom->SetupAttachment(Collision);

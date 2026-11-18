@@ -88,3 +88,37 @@ Owner moved development from Codex to Claude, working locally on the Windows PC.
 2. Real dragon + Viking rider art (free Fab assets, or a Blender-built dragon), seated riding pose.
 3. Terrain detail: free Megascans rock/snow textures, more resolution near the fjord, Viking settlement + longships as the first landmark.
 4. Opening cinematic (camera fly-in), music/wind audio, wing/whoosh sounds.
+
+## Claude checkpoint 2 — November 18, 2026 (supersedes everything above)
+
+Claude is now in charge of the project. ChatGPT/Codex may occasionally help with visuals. Default branch on GitHub: `claude/dragon-flight` (pushed; owner authorised pushes to this branch). The work is organised Atlas-style with specialists: Forge (code), Vertex (Blender), Sentinel (licences), Scout (QA).
+
+**Built and verified by review runs and screenshots:**
+- Flight: power dive (Ctrl/RMB/LT, up to about 800 km/h, slingshot pull-out) and the water plunge (murky underwater camera, 2.5 s breath, Space bursts out). The splash is made from engine shapes (`ADragonSplash`).
+- Rigged dragon (65 bones, about 136k tris) and Viking rider (about 65k tris), procedural from `tools/blender/dragon/`. Animations: Flap, Glide, DiveTuck (bat fold), WingBeatStrong, Hover, RiderIdle. In Unreal: `tools/import_dragon.py` plus the `UDragonAnimInstance` blends. The rider attaches to the `Saddle` bone, with the Blender rest roll undone in code.
+- Viking world kit (`tools/blender/world/`): longships in two clans, longhouse, huts, pier, palisade, watchtower and banners. `tools/import_world_kit.py` imports it, `tools/place_world.py` places three villages (Skerholm, Fjordmunn, Innvik) using the terrain vertex grid, because line traces return nothing in commandlets. `ALongshipActor` is a 6-ship fleet that rows, bobs, billows and loops back to sea.
+- Start point: derived from the real terrain (the mesh is mirrored relative to the old `centre()` formula). It faces up the fjord mouth.
+- Browser preview (`web/flight-preview.html`, an artifact): same physics and the real model via `DragonRider.gltf.json`. The artifact host doesn't serve .glb, so it is converted with `tools/web/glb_to_gltf_json.py`.
+
+**Rebuild order:** Blender scripts, then `import_world_kit.py`, then `import_dragon.py`, then `build_opening_level.py` (which runs `place_world.py`). Details are in README.
+
+**Compliance (Sentinel):**
+- Epic template content was removed from the repo (it's ignored, local copies are kept). Old history still contains it.
+- `NOTICES.md` lists the third-party code and fonts.
+- Commits use the GitHub noreply email.
+- The local Codex branches holding the old Android token were deleted.
+- "Dragon Rider" is the title of a Cornelia Funke novel and has a game trademark filing. Clear the name before any commercial release.
+
+**Open, weakest first:**
+- Owner feedback: it looks too "claymation and boxy". The owner wants the look of a high-end open-world reference video: photoreal cliffs, forests, waterfalls, clouds below the dragon, a brighter dragon and a jacked Viking.
+- Plan:
+  - Megascans (free on Fab again as of Nov 2026) plus Landscape and PCG foliage for the environment.
+  - MetaHuman for the rider.
+  - A higher-quality dragon. The free options are weak; whether to buy a paid one on Fab is the owner's decision.
+- Downloading from Fab needs the owner's Epic login.
+- Known issues:
+  - A white band at the horizon from altitude (the sea plane's edge).
+  - The splash and wakes look like primitives.
+  - Ships have no collision.
+  - The first village is hard to see from the start.
+- Not tested: hands-on feel, gamepad, frame rate.
