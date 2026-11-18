@@ -227,6 +227,7 @@ private:
 	int32 ReviewShot = 0;
 	int32 ReviewPhase = 0;
 	float ReviewEventTime = 0.f;
+	int32 ReviewPass = 0; // review-only teleports: 1 = Skerholm, 2 = Innvik, 3 = fleet
 	void ReviewScreenshot(const TCHAR* What);
 
 	// Animation state

@@ -19,6 +19,7 @@
 #include "UnrealClient.h"
 #include "Misc/CommandLine.h"
 #include "DragonSplash.h"
+#include "LongshipActor.h"
 #include "EngineUtils.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/ExponentialHeightFog.h"
@@ -386,9 +387,74 @@ void ADragonFlightPawn::UpdateReviewMode(float Dt)
 		if (ReviewShot == 10 && T - ReviewEventTime > 1.1f) { ReviewScreenshot(TEXT("after burst")); }
 		if (T - ReviewEventTime > 3.f) { ReviewPhase = 4; }
 		break;
+	case 4: // village low pass: jump out to sea in front of the start village and fly in low over it
+	case 6: // fleet pass: jump behind the rowing fleet and overtake it low along its side
+	{
+		FVector Target = FVector::ZeroVector, Dir = FVector::ForwardVector, Side = FVector::RightVector;
+		float Back = 0.f, Alt = 0.f, Offset = 0.f;
+		bool bFound = false;
+		if (ReviewPhase == 4)
+		{
+			// Skerholm is the village right ahead of the start; Innvik (deep in the fjord) catches the evening sun.
+			const FName VillageTag = ReviewPass == 0 ? FName(TEXT("Village_Skerholm")) : FName(TEXT("Village_Innvik"));
+			for (TActorIterator<AActor> It(GetWorld()); It; ++It)
+			{
+				if (It->ActorHasTag(VillageTag))
+				{
+					// Longhouse doors (+Y) face the water: approach from the sea along -right.
+					Target = It->GetActorLocation(); Dir = -It->GetActorRightVector(); bFound = true;
+					break;
+				}
+			}
+			Back = 30000.f; Alt = 5200.f; Offset = 4500.f; // pass beside the longhouse so the dragon doesn't hide it
+		}
+		else
+		{
+			int32 N = 0;
+			for (TActorIterator<ALongshipActor> It(GetWorld()); It; ++It)
+			{
+				if (It->SailSpeed > 1.f) { Target += It->GetActorLocation(); Dir = It->GetActorForwardVector(); ++N; }
+			}
+			if (N > 0) { Target /= N; bFound = true; }
+			Back = 26000.f; Alt = 2600.f; Offset = 6000.f;
+		}
+		Dir = FVector(Dir.X, Dir.Y, 0.f).GetSafeNormal();
+		Side = FVector(-Dir.Y, Dir.X, 0.f);
+		if (bFound)
+		{
+			SetActorLocation(FVector(Target.X, Target.Y, Alt) - Dir * Back + Side * Offset);
+			FlightYaw = Dir.Rotation().Yaw;
+			FlightPitch = -2.f; Speed = CruiseSpeed; Bank = 0.f; YawRate = 0.f;
+			VerticalBoost = 0.f; BurstAmount = 0.f; DiveAmount = 0.f; UnderwaterAmount = 0.f; PullOutTime = 0.f; bDiveHeld = false;
+			C->SetControlRotation(FRotator(-6.f, FlightYaw, 0.f));
+		}
+		UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW %s pass found=%d target=%s"), ReviewPhase == 4 ? TEXT("village") : TEXT("fleet"), bFound ? 1 : 0, *Target.ToString());
+		++ReviewPhase; ++ReviewPass; ReviewEventTime = T;
+		break;
+	}
+	case 5:
+		C->SetControlRotation(FRotator(-5.f, FlightYaw, 0.f));
+		// Screenshots grab a later frame, so wait a moment after each shot before teleporting on.
+		if (ReviewPass == 1)
+		{
+			if (ReviewShot == 11 && T - ReviewEventTime > 4.f) { ReviewScreenshot(TEXT("village Skerholm approach")); }
+			if (T - ReviewEventTime > 4.5f) { ReviewPhase = 4; }
+		}
+		else
+		{
+			if (ReviewShot == 12 && T - ReviewEventTime > 5.f) { ReviewScreenshot(TEXT("village Innvik pass")); }
+			if (T - ReviewEventTime > 5.5f) { ReviewPhase = 6; }
+		}
+		break;
+	case 7:
+		C->SetControlRotation(FRotator(-0.5f, FlightYaw, 0.f));
+		if (ReviewShot == 13 && T - ReviewEventTime > 4.f) { ReviewScreenshot(TEXT("fleet pass")); }
+		if (ReviewShot == 14 && T - ReviewEventTime > 6.f) { ReviewScreenshot(TEXT("fleet alongside")); }
+		if (T - ReviewEventTime > 6.5f) { ReviewPhase = 8; }
+		break;
 	default: break;
 	}
-	if (ReviewPhase >= 4 || T > 70.f)
+	if (ReviewPhase >= 8 || T > 110.f)
 	{
 		if (APlayerController* PC = Cast<APlayerController>(C)) { PC->ConsoleCommand(TEXT("quit")); }
 	}

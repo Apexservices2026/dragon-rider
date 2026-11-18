@@ -264,3 +264,10 @@ if not levels.save_current_level():
     raise RuntimeError('Level save failed')
 log('saved %s (start %.0f, %.0f heading %.1f)' % (LEVEL, FJ_X, fj_y, heading))
 unreal.log('OPENING_LEVEL_SAVED')
+
+# ---------------------------------------------------------------- villages + longship fleet (needs tools/import_world_kit.py run once)
+PLACE = os.path.normpath(os.path.join(PROJECT_DIR, '..', '..', 'tools', 'place_world.py'))
+if eal.does_directory_exist('/Game/DragonRider/World/Meshes'):
+    exec(compile(open(PLACE, encoding='utf-8').read(), PLACE, 'exec'), {'__name__': '__main__'})
+else:
+    unreal.log_warning('OPENING_BUILD: world kit not imported; skipped villages/fleet (run tools/import_world_kit.py, then rebuild)')

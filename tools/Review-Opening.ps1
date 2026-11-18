@@ -1,5 +1,5 @@
-# Fly the scripted review route in the opening level, save screenshots, and quit (~60 s).
-# Shots 00-05: cruise, orbit beauty shots, turn, boosted dive, climb. 06-10: power dive, entry splash, underwater, burst, after burst.
+# Fly the scripted review route in the opening level, save screenshots, and quit (~80 s).
+# Shots 00-05: cruise, orbit, turn, boosted dive, climb. 06-10: power dive, entry splash, underwater, burst, after burst. 11-14: village low pass, fleet pass.
 # Screenshots land in Game/DragonRider/Saved/Screenshots/Windows*/DragonReview_XX.png
 $ErrorActionPreference = 'Stop'
 $editor = 'C:\Program Files\Epic Games\UE_5.8\Engine\Binaries\Win64\UnrealEditor.exe'
