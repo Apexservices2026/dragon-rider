@@ -2,7 +2,11 @@
 
 Unreal Engine 5.8 Viking fantasy action-adventure, with dragon flight as the core mechanic. Target: realistic cinematic Nordic landscapes and exciting, responsive flight.
 
-## Current prototype
+## Current prototype (Claude, Nov 18 2026)
+
+The game now opens in `Lvl_Opening`: you ride a dragon (C++ `ADragonFlightPawn`) over a Blender-generated Nordic fjord at golden hour. Controls: mouse steer, W/S speed, A/D bank, Space wing beat, Shift boost, Q/E barrel roll. Play from the editor or run `tools/Review-Opening.ps1` for an automated screenshot flight. The project now has C++ code: build it with Visual Studio 2026 (or let Unreal rebuild it when the .uproject opens).
+
+## Earlier Codex prototype
 
 A six-gate flight course with a native DefaultPawn-derived flying sphere, tuned acceleration/braking, and a third-person spring-arm camera. This is a graybox movement foundation, not finished dragon gameplay. No dragon art, wing animation, mount/dismount, combat, banking, or missions yet.
 

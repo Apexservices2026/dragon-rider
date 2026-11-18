@@ -66,3 +66,25 @@ The owner is new to game development and wants beginner-friendly, one-step-at-a-
 - Presentation map has NOT been visually verified. Offscreen screenshot launch was interrupted, then aborted. No exported screenshots were produced. Existing earlier game-window captures showed the graybox prototype only.
 - Next: open Lvl_FlightTrial in Windows Unreal, check text orientation/legibility and materials, test sustained WASD/altitude input and course collision, then capture two real screenshots. Keep Lvl_FlightPrototype as the verified-render baseline until the trial passes review.
 - No gate scoring, timer, victory logic, dragon model, wing animation, mount/dismount, or combat has been implemented. This remains a free-flight prototype rather than a finished game.
+
+## Claude checkpoint — November 18, 2026 (supersedes the "current state" sections above)
+
+Owner moved development from Codex to Claude, working locally on the Windows PC. Owner decisions: free assets first (no purchases), cinematic-arcade flight feel, C++ for flight code, game opens with a Viking riding a dragon.
+
+- Branch: `claude/dragon-flight` (from `codex/shared-prototype`). Nothing pushed yet.
+- The project is now **C++ + Blueprint**: module `Game/DragonRider/Source/DragonRider` (builds with VS 2026 / UE 5.8; `Build.bat DragonRiderEditor Win64 Development -Project=...`).
+  - `ADragonFlightPawn`: custom arcade flight. Mouse aims, dragon chases the aim and banks into turns; dives convert altitude to speed, climbs bleed it; W/S throttle, A/D bank-turn, Space wing beat (lift + speed), Shift boost (stamina), Q/E barrel roll. Sweep collision skims/deflects off terrain and water. Camera: lagged spring arm, speed-based FOV/arm length, shake, motion blur. All tuning values are `EditAnywhere`. Gamepad mapped too (untested).
+  - Placeholder dragon built from engine primitives with procedural wing beats (shoulder + wrist), glide pose in dives, travelling-wave tail, head looking into turns. Rider = UE mannequin (standing idle) — placeholder until a Viking model.
+  - `ADragonRiderGameMode` / `ADragonHUD`: title card, speed/altitude, stamina bar, control hints.
+  - `-DragonShots` command-line flag: scripted review flight that saves 6 screenshots and quits (`tools/Review-Opening.ps1`).
+- Opening level `/Game/DragonRider/Opening/Lvl_Opening` (now the default game + editor map):
+  - Terrain from Blender: `tools/blender/gen_fjord_terrain.py` (headless, ~6 s) → 16×16 km fjord, 2M tris → `Saved/Generated/SM_FjordTerrain.fbx` (not in Git; regenerate).
+  - `tools/build_opening_level.py` rebuilds everything under `/Game/DragonRider/Opening` (it deletes and recreates only that folder): imports terrain (Nanite OFF — with Nanite on, only the 27k-tri fallback rendered), procedural height/slope terrain material (rock/moss/snow/wet shore + streak noise — FBX vertex colours did not survive import), water, golden-hour sun, sky atmosphere, volumetric clouds, height fog, post-process grade, player start over the sea facing the fjord mouth.
+- Verified (by automated review run, screenshots inspected): level loads, dragon spawns and flies, banking turn, boosted dive reaches ~418 km/h, wing-beat climb recovers, terrain/water/sky render correctly. NOT verified: hands-on mouse/keyboard feel, gamepad, frame rate, collision feel when hitting cliffs.
+- Codex's earlier maps (Lvl_FlightPrototype/Pass/Trial) and builder scripts are untouched.
+
+### Next steps
+1. Owner playtest of flight feel → tune values.
+2. Real dragon + Viking rider art (free Fab assets, or a Blender-built dragon), seated riding pose.
+3. Terrain detail: free Megascans rock/snow textures, more resolution near the fjord, Viking settlement + longships as the first landmark.
+4. Opening cinematic (camera fly-in), music/wind audio, wing/whoosh sounds.
