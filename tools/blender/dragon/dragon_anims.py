@@ -125,11 +125,55 @@ def glide(f, ph):
 
 
 # ----------------------------------------------------------------------------- DiveTuck
+# tight bat/falcon stoop fold, solved from world-space target directions (left wing; mirrored):
+# upper arm back + down along the flank, forearm folded forward along it, fingers collapsed back
+# along the forearm (fanned slightly downward so the membranes bunch in stacked pleats).
+FOLD_TARGETS = {
+    "Wing_UpperArm_L": (-0.95, 0.25, -0.20),
+    "Wing_Forearm_L": (0.97, 0.12, -0.08),
+    "Wing_Wrist_L": (-0.98, -0.10, -0.04),
+    "Wing_F1_01_L": (-0.98, -0.12, -0.05),
+    "Wing_F2_01_L": (-0.98, -0.13, -0.10),
+    "Wing_F3_01_L": (-0.97, -0.12, -0.16),
+    "Wing_F4_01_L": (-0.95, -0.10, -0.22),
+}
+PARENT = {"Wing_Forearm_L": "Wing_UpperArm_L", "Wing_Wrist_L": "Wing_Forearm_L"}
+for _k in range(1, 5):
+    PARENT[f"Wing_F{_k}_01_L"] = "Wing_Wrist_L"
+
+
+def _fold_rel():
+    bones = arm.data.bones
+    W = {}
+    for n, t in FOLD_TARGETS.items():
+        b = bones[n]
+        rest = (b.tail_local - b.head_local).normalized()
+        W[n] = rest.rotation_difference(Vector(t).normalized())
+    rel = {}
+    for n, w in W.items():
+        par = PARENT.get(n)
+        q = (W[par].inverted() @ w) if par else w
+        ax, ang = q.to_axis_angle()
+        rel[n[:-2]] = (tuple(ax), ang)
+    return rel
+
+
+FOLD_REL = _fold_rel()
+
+
+def wing_folded(p, tr=0.0, ph=0.0):
+    add(p, "Wing_Shoulder", ('x', -0.06))
+    for n, (ax, ang) in FOLD_REL.items():
+        add(p, n, (ax, ang))
+    add(p, "Wing_Forearm", ('x', tr * math.sin(9 * ph)))
+    add(p, "Wing_Wrist", ('x', tr * math.sin(9 * ph + 1.3)))
+    for k in range(1, 5):
+        add(p, f"Wing_F{k}_02", ('z', 0.03), ('x', -0.02 + 0.6 * tr * math.sin(12 * ph + k)))
+
+
 def dive(f, ph):
     p = {}
-    wing(p, lift=0.0 + 0.01 * math.sin(6 * ph), tuck=1.0, fore_lift=0.012 * math.sin(9 * ph),
-         fing_lift=0.01 * math.sin(9 * ph + 1.3), twist=0.01 * math.sin(6 * ph + 0.7))
-    add(p, "Wing_Shoulder", ('x', -0.08), ('z', 0.05))
+    wing_folded(p, tr=0.012, ph=ph)
     add(p, "Body", ('x', 0.01 * math.sin(3 * ph)))
     for i, a in enumerate((0.35, 0.20, 0.05, 0.0, -0.15, -0.2), start=1):
         add(p, f"Neck{i:02d}", ('y', a), ('z', 0.006 * math.sin(6 * ph - 0.5 * i)))

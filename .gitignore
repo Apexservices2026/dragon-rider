@@ -17,3 +17,4 @@ Thumbs.db
 
 # Unreal per-user editor preferences
 **/Config/DefaultEditorPerProjectUserSettings.ini
+__pycache__/

@@ -10,6 +10,7 @@ FBX (Unreal 5): +X forward / Z up in Unreal, 1 m = 100 cm.
   Saddle), mesh triangulated + tangent space, every action baked as its own take (step 1, no simplify).
   Textures are referenced relatively from ./Textures (PNG).
 GLB: Y-up glTF, all actions as separate clips, textures down-sized and JPEG-encoded to stay small.
+DragonRider.glb: dragon + rider parented to the Saddle bone, dragon actions + RiderIdle (web preview).
 """
 import os
 import sys
@@ -72,7 +73,65 @@ def export_asset(blend, arm_name, mesh_name, base, glb_overrides=None):
     return fbx, glb
 
 
-export_asset("Dragon.blend", "DragonRig", "Dragon", "Dragon",
+ONLY_COMBINED = "--combined" in sys.argv
+if not ONLY_COMBINED:
+  export_asset("Dragon.blend", "DragonRig", "Dragon", "Dragon",
              {"Wings_Normal": 1024})
-if os.path.exists(os.path.join(OUT, "Rider.blend")):
+if os.path.exists(os.path.join(OUT, "Rider.blend")) and not ONLY_COMBINED:
     export_asset("Rider.blend", "RiderRig", "Rider", "Rider", {"Rider_BaseColor": 2048})
+
+
+def export_combined(path="DragonRider.glb"):
+    """Dragon with the rider parented to the Saddle bone; all dragon actions + RiderIdle."""
+    bpy.ops.wm.open_mainfile(filepath=os.path.join(OUT, "Dragon.blend"))
+    sc = bpy.context.scene
+    darm = bpy.data.objects["DragonRig"]
+    with bpy.data.libraries.load(os.path.join(OUT, "Rider.blend"), link=False) as (src, dst):
+        dst.objects = [n for n in src.objects if n in ("Rider", "RiderRig")]
+        dst.actions = [n for n in src.actions if n == "RiderIdle"]
+    for o in dst.objects:
+        sc.collection.objects.link(o)
+    rarm, rmesh = bpy.data.objects["RiderRig"], bpy.data.objects["Rider"]
+    sb = darm.data.bones["Saddle"]
+    rarm.parent = darm
+    rarm.parent_type = 'BONE'
+    rarm.parent_bone = "Saddle"
+    rarm.matrix_parent_inverse.identity()
+    rarm.rotation_mode = 'QUATERNION'
+    rarm.rotation_quaternion = sb.matrix_local.to_3x3().inverted().to_quaternion()   # identity (Saddle rest = identity)
+    rarm.location = (0, -sb.length, 0)            # bone parenting sits at the tail: move back to the seat (head)
+    act = bpy.data.actions["RiderIdle"]
+    if rarm.animation_data is None:
+        rarm.animation_data_create()
+    rarm.animation_data.action = act
+    if rarm.animation_data.action_slot is None and len(act.slots):
+        rarm.animation_data.action_slot = act.slots[0]
+    darm.animation_data.action = None
+    # with two armatures the glTF exporter only finds actions that are bound to an object, so
+    # put every dragon action on its own (muted) NLA track of DragonRig
+    for nm in ("Flap", "Glide", "DiveTuck", "WingBeatStrong", "Hover"):
+        a = bpy.data.actions[nm]
+        tr = darm.animation_data.nla_tracks.new()
+        tr.name = nm
+        st = tr.strips.new(nm, 0, a)
+        if hasattr(st, "action_slot") and len(a.slots):
+            st.action_slot = a.slots[0]
+        tr.mute = True
+    sizes = {"Body_BaseColor": 2048, "Body_Normal": 2048, "Wings_BaseColor": 2048, "Wings_Normal": 1024,
+             "ORM": 1024, "Emissive": 1024, "Rider_BaseColor": 1024, "Rider_Normal": 1024}
+    for img in bpy.data.images:
+        for k, s in sizes.items():
+            if (img.name.endswith(k + ".png") or img.name.endswith(k)) and img.size[0] > s:
+                img.scale(s, s)
+    select_only([darm, bpy.data.objects["Dragon"], rarm, rmesh])
+    glb = os.path.join(OUT, path)
+    bpy.ops.export_scene.gltf(
+        filepath=glb, export_format='GLB', use_selection=True, export_yup=True, export_apply=False,
+        export_texcoords=True, export_normals=True, export_tangents=False, export_materials='EXPORT',
+        export_image_format='JPEG', export_jpeg_quality=80, export_skins=True, export_animations=True,
+        export_animation_mode='ACTIONS', export_force_sampling=True, export_anim_single_armature=False,
+        export_reset_pose_bones=True, export_optimize_animation_size=True)
+    print("GLB", glb, os.path.getsize(glb) // 1024, "KB")
+
+
+export_combined()

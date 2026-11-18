@@ -37,7 +37,7 @@ def report(path):
     print(f"   total tris {tris}")
 
 
-for f in ("Dragon.fbx", "Rider.fbx", "Dragon.glb", "Rider.glb"):
+for f in ("Dragon.fbx", "Rider.fbx", "Dragon.glb", "Rider.glb", "DragonRider.glb"):
     p = os.path.join(dlib.OUT_DIR, f)
     if os.path.exists(p):
         report(p)

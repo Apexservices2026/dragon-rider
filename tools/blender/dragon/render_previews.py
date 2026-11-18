@@ -135,6 +135,7 @@ SHOTS = {
     "dive_top": dict(action="DiveTuck", frame=10, cam=((0.0, -0.001, 23.0), (0.0, 0.0, 0.0), 40)),
     "head_close": dict(action="Glide", frame=0, cam=((7.0, -2.6, 2.1), (4.85, 0, 1.5), 50)),
     "rider_close": dict(action="Glide", frame=30, cam=("seat", (2.3, -2.6, 0.75), (0.1, 0, 0.45), 40)),
+    "rider_face": dict(action="Glide", frame=0, cam=("seat", (1.0, -0.2, 0.92), (0.30, 0, 0.86), 50)),
     "rider_rear": dict(action="Glide", frame=30, cam=("seat", (-3.2, -2.4, 1.4), (0.1, 0, 0.4), 35)),
     "hero": dict(action="Flap", frame=0, cam=((7.4, -6.2, -0.9), (0.6, 0.4, 1.5), 24)),
     "dive_side": dict(action="DiveTuck", frame=10, cam=((6.0, -16.0, 6.0), (0.0, 0, 0.3), 40)),

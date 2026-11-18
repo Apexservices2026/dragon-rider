@@ -207,7 +207,7 @@ class Acc:
 
 
 def loft(acc, rows, n_rings, n_seg, up=(0, 0, 1), cap0=True, cap1=True, mat=0,
-         weight_fn=None, attrs=None, section=None, closed=True):
+         weight_fn=None, attrs=None, section=None, closed=True, vattrs=None):
     """Loft a tube along a Catmull-Rom curve through rows (x, y, z, r_side, r_up).
     section(t, theta, L) -> radial multiplier; weight_fn(t, L) -> dict;
     attrs: name -> fn(t, L) -> scalar. Returns dict(C, L, ctrlL, T, U, S)."""
@@ -224,6 +224,14 @@ def loft(acc, rows, n_rings, n_seg, up=(0, 0, 1), cap0=True, cap1=True, mat=0,
         R[i] = C[i] + np.outer(np.sin(th) * ra * m, S[i]) + np.outer(np.cos(th) * rb * m, U[i])
     weights = [weight_fn(t_all[i], L[i]) for i in range(n_rings)] if weight_fn else None
     at = {k: np.array([f(t_all[i], L[i]) for i in range(n_rings)]) for k, f in (attrs or {}).items()}
+    # per-vertex attrs: fn(t, theta, L, ra, rb) -> scalar or 3-tuple  (theta wrapped to (-pi, pi])
+    for k, f in (vattrs or {}).items():
+        vals = []
+        for i in range(n_rings):
+            for a in th:
+                aw = a if a <= math.pi else a - 2 * math.pi
+                vals.append(f(t_all[i], aw, L[i], Sm[i, 3], Sm[i, 4]))
+        at[k] = np.array(vals, float)
     acc.rings(R, closed=closed, cap0=cap0, cap1=cap1, mat=mat, weights=weights, attrs=at)
     ctrlL = [float(L[np.argmin(np.linalg.norm(C - r[:3], axis=1))]) for r in rows]
     ctrlL[0], ctrlL[-1] = 0.0, float(L[-1])
