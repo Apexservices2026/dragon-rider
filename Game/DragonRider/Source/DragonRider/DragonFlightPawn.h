@@ -52,6 +52,13 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetUnderwaterAmount() const { return UnderwaterAmount; }
 	/** 0..1 spike right after bursting out of the water (wings flung open). */
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetBurstAmount() const { return BurstAmount; }
+	// --- Read by UDragonAnimInstance ---
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetFlightPitch() const { return FlightPitch; }
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetThrottle() const { return ThrottleInput; }
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetYawRate() const { return YawRate; }
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") bool IsWingBeating() const { return WingBeatTimer > 0.f; }
+	/** Increments on every wing beat and water burst (anim instance restarts the WingBeatStrong one-shot). */
+	UFUNCTION(BlueprintPure, Category = "Dragon|State") int32 GetWingBeatCount() const { return WingBeatCount; }
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetDepthMeters() const { return FMath::Max(0.f, -GetActorLocation().Z / 100.f); }
 	/** 1 = full breath, 0 = forced to the surface. */
 	UFUNCTION(BlueprintPure, Category = "Dragon|State") float GetBreath01() const { return bUnderwater ? FMath::Clamp(1.f - UnderwaterTime / MaxUnderwaterTime, 0.f, 1.f) : 1.f; }
@@ -119,6 +126,8 @@ public:
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float SpeedArmExtra = 700.f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float MouseSensitivity = 1.0f;
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float PowerDiveFOVExtra = 14.f;
+	/** Extra rider rotation on the Saddle, in the dragon's body frame (the bone's own rest frame is undone in code). */
+	UPROPERTY(EditAnywhere, Category = "Dragon|Rig") FRotator SaddleRiderRotation = FRotator::ZeroRotator;
 	/** Arm length multiplier at full dive (pulls the camera in). */
 	UPROPERTY(EditAnywhere, Category = "Dragon|Camera") float PowerDiveArmScale = 0.78f;
 
@@ -134,6 +143,8 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<USceneComponent> NeckPivot;
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<USceneComponent> TailPivot;
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<USkeletalMeshComponent> Rider;
+	/** Rigged dragon from tools/import_dragon.py; when its asset is missing the primitive placeholder is shown instead. */
+	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<USkeletalMeshComponent> DragonMesh;
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<USpringArmComponent> CameraBoom;
 	UPROPERTY(VisibleAnywhere, Category = "Components") TObjectPtr<UCameraComponent> Camera;
 
@@ -157,6 +168,7 @@ private:
 	void ExitWater();
 	bool IsWaterComponent(const UPrimitiveComponent* Comp);
 	void FindWorldWaterAndFog();
+	void SetupRiggedDragon();
 	void UpdateUnderwaterView(float Dt);
 
 	void UpdateFlight(float Dt);
@@ -196,6 +208,9 @@ private:
 	float ImpactCooldown = 0.f;
 	float YawRate = 0.f;
 	float LastLookInputTime = -10.f;
+	int32 WingBeatCount = 0;
+	bool bRigged = false;
+	UPROPERTY() TArray<TObjectPtr<class UAnimSequence>> DragonAnims; // Glide, Flap, DiveTuck, WingBeatStrong, Hover
 
 	// Power dive state
 	bool bDiveHeld = false;

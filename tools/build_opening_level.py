@@ -195,7 +195,7 @@ t.static_mesh_component.set_material(0, tm)
 water = spawn(unreal.StaticMeshActor, (0, 0, 0), label='Sea', folder='Opening/World')
 water.static_mesh_component.set_static_mesh(eal.load_asset('/Engine/BasicShapes/Plane'))
 water.static_mesh_component.set_material(0, wm)
-water.set_actor_scale3d(unreal.Vector(30000, 30000, 1))   # 3,000 km of sea out to the horizon
+water.set_actor_scale3d(unreal.Vector(30000, 30000, 1))   # 30 km of sea (a 1 m plane); larger breaks the water shading
 
 # Golden-hour sun low in the south-west, behind-left of the player's opening heading (east).
 sun = spawn(unreal.DirectionalLight, (0, 0, 500000), (-15.0, 52.0, 0), 'Sun', 'Opening/Lighting')
@@ -247,12 +247,51 @@ for k, v in (('bloom_intensity', 0.9), ('auto_exposure_bias', 0.4), ('vignette_i
     s.set_editor_property(k, v)
 pp.set_editor_property('settings', s)
 
-# Player start: at the fjord mouth over the sea, heading east into the fjord.
-def centre(x): return 1700.0 * math.sin(x / 2600.0) + 550.0 * math.sin(x / 950.0 + 1.3)
-FJ_X = -7900.0                      # out over open sea, looking at the fjord mouth
-fj_y = centre(-5200.0)
-heading = math.degrees(math.atan2(centre(-4200.0) - fj_y, -4200.0 - FJ_X))
-spawn(unreal.PlayerStart, (FJ_X * 100.0, fj_y * 100.0, 32000.0), (0, heading, 0), 'DragonStart', 'Opening')
+# Player start: out over the open sea, looking at the fjord mouth with the first village (Skerholm) in view.
+# The imported terrain's Y is mirrored relative to the Blender centre() formula, so everything is derived from
+# the real terrain vertices: the mouth is the longest water run across x = -5200 m, and the start is the open-sea
+# point (x <= -7600 m) with clear line of sight to both the village and the mouth and the tightest angle between them.
+md = terrain.get_static_mesh_description(0)
+GN = int(round(math.sqrt(md.get_vertex_count())))
+GSTEP = 1600000.0 / (GN - 1)
+HG = [0.0] * (GN * GN)
+for i in range(md.get_vertex_count()):
+    p = md.get_vertex_position(unreal.VertexID(i))
+    HG[int(round((p.y + 800000.0) / GSTEP)) * GN + int(round((p.x + 800000.0) / GSTEP))] = p.z / 100.0
+def ground(x, y):  # metres
+    i = min(GN - 1, max(0, int(round((x * 100.0 + 800000.0) / GSTEP))))
+    j = min(GN - 1, max(0, int(round((y * 100.0 + 800000.0) / GSTEP))))
+    return HG[j * GN + i]
+def clear(a, b, za, zb):
+    return all(ground(a[0] + (b[0] - a[0]) * t / 200.0, a[1] + (b[1] - a[1]) * t / 200.0) < za + (zb - za) * t / 200.0 - 3.0 for t in range(1, 200))
+runs, start_y = [], None
+for k in range(-300, 301):
+    y = k * 10.0
+    if ground(-5200.0, y) < -1.0 and start_y is None:
+        start_y = y
+    elif ground(-5200.0, y) >= -1.0 and start_y is not None:
+        runs.append((y - start_y, start_y, y)); start_y = None
+_, y0, y1 = max(runs)
+mouth = (-5200.0, (y0 + y1) / 2.0)
+FIRST_VILLAGE = (-6156.0, -1406.0)  # Skerholm, see tools/place_world.py
+START_ALT = 400.0
+def bearing(f, p): return math.degrees(math.atan2(p[1] - f[1], p[0] - f[0]))
+best = None
+for x in range(-8000, -7550, 100):
+    for y in range(-3000, 1600, 100):
+        f = (float(x), float(y))
+        if ground(*f) > -5.0 or not clear(f, FIRST_VILLAGE, START_ALT, 15.0) or not clear(f, mouth, START_ALT, 40.0):
+            continue
+        spread = abs(bearing(f, mouth) - bearing(f, FIRST_VILLAGE))
+        if best is None or spread < best[0]:
+            best = (spread, f)
+if not best:
+    raise RuntimeError('No open-sea start with a view of the fjord mouth and the first village')
+(FJ_X, fj_y) = best[1]
+heading = (bearing(best[1], mouth) + bearing(best[1], FIRST_VILLAGE)) / 2.0
+log('fjord mouth at (%.0f, %.0f) m; start (%.0f, %.0f) heading %.1f (mouth %.1f, village %.1f)' % (
+    mouth[0], mouth[1], FJ_X, fj_y, heading, bearing(best[1], mouth), bearing(best[1], FIRST_VILLAGE)))
+spawn(unreal.PlayerStart, (FJ_X * 100.0, fj_y * 100.0, START_ALT * 100.0), (0, heading, 0), 'DragonStart', 'Opening')
 
 world = unreal.EditorLevelLibrary.get_editor_world()
 ws = world.get_world_settings()

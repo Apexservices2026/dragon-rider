@@ -20,6 +20,8 @@
 #include "Misc/CommandLine.h"
 #include "DragonSplash.h"
 #include "LongshipActor.h"
+#include "DragonAnimInstance.h"
+#include "Animation/AnimSequence.h"
 #include "EngineUtils.h"
 #include "Engine/StaticMeshActor.h"
 #include "Engine/ExponentialHeightFog.h"
@@ -54,19 +56,28 @@ ADragonFlightPawn::ADragonFlightPawn()
 
 	BuildDragonBody();
 
+	// Rigged dragon + Viking rider (tools/import_dragon.py) are loaded at BeginPlay, so editor commandlets that
+	// rebuild those assets never hold them. Until then (or if they're missing) the primitive placeholder and the
+	// UE mannequin rider below are used, so the game never breaks.
+	DragonMesh = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("DragonMesh"));
+	DragonMesh->SetupAttachment(Collision);
+	DragonMesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	DragonMesh->SetGenerateOverlapEvents(false);
+	DragonMesh->VisibilityBasedAnimTickOption = EVisibilityBasedAnimTickOption::AlwaysTickPoseAndRefreshBones;
+
 	Rider = CreateDefaultSubobject<USkeletalMeshComponent>(TEXT("Rider"));
+	Rider->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Rider->SetupAttachment(BodyRoot);
 	Rider->SetRelativeLocation(FVector(95.f, 0.f, 62.f));
 	Rider->SetRelativeRotation(FRotator(0.f, -90.f, 0.f)); // UE mannequins face +Y
 	Rider->SetRelativeScale3D(FVector(1.05f));
-	Rider->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	static ConstructorHelpers::FObjectFinder<USkeletalMesh> RiderMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
-	static ConstructorHelpers::FObjectFinder<UAnimSequence> RiderIdle(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle"));
-	if (RiderMesh.Succeeded()) { Rider->SetSkeletalMesh(RiderMesh.Object); }
-	if (RiderIdle.Succeeded())
+	static ConstructorHelpers::FObjectFinderOptional<USkeletalMesh> RiderMesh(TEXT("/Game/Characters/Mannequins/Meshes/SKM_Manny_Simple.SKM_Manny_Simple"));
+	static ConstructorHelpers::FObjectFinderOptional<UAnimSequence> RiderIdle(TEXT("/Game/Characters/Mannequins/Anims/Unarmed/MM_Idle.MM_Idle"));
+	if (RiderMesh.Get()) { Rider->SetSkeletalMesh(RiderMesh.Get()); }
+	if (RiderIdle.Get())
 	{
 		Rider->SetAnimationMode(EAnimationMode::AnimationSingleNode);
-		Rider->AnimationData.AnimToPlay = RiderIdle.Object;
+		Rider->AnimationData.AnimToPlay = RiderIdle.Get();
 		Rider->AnimationData.bSavedLooping = true;
 		Rider->AnimationData.bSavedPlaying = true;
 	}
@@ -236,6 +247,7 @@ void ADragonFlightPawn::BeginPlay()
 {
 	Super::BeginPlay();
 	ApplyBodyColors();
+	SetupRiggedDragon();
 	const FRotator Start = GetActorRotation();
 	FlightYaw = Start.Yaw;
 	FlightPitch = FRotator::NormalizeAxis(Start.Pitch);
@@ -243,6 +255,82 @@ void ADragonFlightPawn::BeginPlay()
 	Stamina = MaxStamina;
 	bReviewMode = FParse::Param(FCommandLine::Get(), TEXT("DragonShots"));
 	FindWorldWaterAndFog();
+}
+
+void ADragonFlightPawn::SetupRiggedDragon()
+{
+	const TCHAR* Dir = TEXT("/Game/DragonRider/Characters/");
+	USkeletalMesh* DragonSK = LoadObject<USkeletalMesh>(nullptr, *FString::Printf(TEXT("%sSK_Dragon.SK_Dragon"), Dir), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	USkeletalMesh* RiderSK = LoadObject<USkeletalMesh>(nullptr, *FString::Printf(TEXT("%sSK_Rider.SK_Rider"), Dir), nullptr, LOAD_NoWarn | LOAD_Quiet);
+	bRigged = DragonSK != nullptr;
+	if (!bRigged) { DragonMesh->SetVisibility(false); return; }
+
+	DragonMesh->SetAnimInstanceClass(UDragonAnimInstance::StaticClass());
+	DragonMesh->SetSkeletalMesh(DragonSK);
+	// Material instances by slot (also set on the asset by the import; this keeps the game right if that was lost).
+	auto ApplyMI = [Dir](USkeletalMeshComponent* C)
+	{
+		const TArray<FName> Slots = C->GetMaterialSlotNames();
+		for (int32 i = 0; i < Slots.Num(); ++i)
+		{
+			const FString S = Slots[i].ToString();
+			const TCHAR* MI = S.Contains(TEXT("Wing")) ? TEXT("MI_Dragon_Wings_TwoSided") : S.Contains(TEXT("Rider")) ? TEXT("MI_Rider") : TEXT("MI_Dragon_Body");
+			if (UMaterialInterface* M = LoadObject<UMaterialInterface>(nullptr, *FString::Printf(TEXT("%sMaterials/%s.%s"), Dir, MI, MI), nullptr, LOAD_NoWarn | LOAD_Quiet))
+			{
+				C->SetMaterial(C->GetMaterialIndex(Slots[i]), M);
+			}
+		}
+	};
+	ApplyMI(DragonMesh);
+	BodyRoot->SetVisibility(false, true); // hide the primitive placeholder
+	BodyRoot->SetRelativeLocationAndRotation(FVector::ZeroVector, FRotator::ZeroRotator);
+
+	static const TCHAR* Takes[] = { TEXT("Glide"), TEXT("Flap"), TEXT("DiveTuck"), TEXT("WingBeatStrong"), TEXT("Hover") };
+	DragonAnims.Reset();
+	for (const TCHAR* T : Takes)
+	{
+		DragonAnims.Add(LoadObject<UAnimSequence>(nullptr, *FString::Printf(TEXT("%sSK_DragonDragonRig_%s.SK_DragonDragonRig_%s"), Dir, T, T), nullptr, LOAD_NoWarn | LOAD_Quiet));
+	}
+	if (UDragonAnimInstance* Anim = Cast<UDragonAnimInstance>(DragonMesh->GetAnimInstance()))
+	{
+		Anim->GlideSeq = DragonAnims[0]; Anim->FlapSeq = DragonAnims[1]; Anim->DiveSeq = DragonAnims[2];
+		Anim->WingBeatSeq = DragonAnims[3]; Anim->HoverSeq = DragonAnims[4];
+		const FReferenceSkeleton& Ref = DragonSK->GetRefSkeleton();
+		for (int32 i = 0; i < Ref.GetNum(); ++i)
+		{
+			const FString N = Ref.GetBoneName(i).ToString();
+			if (N.StartsWith(TEXT("Neck")) || N == TEXT("Head")) { Anim->NeckBones.Add(Ref.GetBoneName(i)); }
+		}
+	}
+
+	if (RiderSK)
+	{
+		// Rider origin = seat point; the Saddle bone carries Blender's -90 deg X rest roll, undone by SaddleRiderRotation.
+		Rider->AttachToComponent(DragonMesh, FAttachmentTransformRules::SnapToTargetNotIncludingScale, TEXT("Saddle"));
+		// Undo the Saddle bone's rest frame (Blender bone axes, -90 deg roll): align the rider with the dragon's body
+		// axes (+X forward, +Z up) in the bind pose, plus an optional trim. The saddle still carries body motion.
+		DragonMesh->RefreshBoneTransforms();
+		const FQuat SaddleCS = DragonMesh->GetSocketTransform(TEXT("Saddle"), RTS_Component).GetRotation();
+		Rider->SetRelativeLocationAndRotation(FVector::ZeroVector, SaddleCS.Inverse() * SaddleRiderRotation.Quaternion());
+		Rider->SetUsingAbsoluteScale(true); // don't inherit the Saddle bone's scale
+		Rider->SetWorldScale3D(FVector(1.f));
+		Rider->SetVisibility(true);
+		Rider->SetSkeletalMesh(RiderSK);
+		ApplyMI(Rider);
+		if (UAnimSequence* Idle = LoadObject<UAnimSequence>(nullptr, *FString::Printf(TEXT("%sSK_Rider_Anim.SK_Rider_Anim"), Dir), nullptr, LOAD_NoWarn | LOAD_Quiet))
+		{
+			Rider->PlayAnimation(Idle, true);
+		}
+	}
+	int32 Valid = 0;
+	for (UAnimSequence* A : DragonAnims) { Valid += A && A->GetSkeleton() ? 1 : 0; }
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_RIG bones=%d anims=%d/5 rider=%d"), DragonSK->GetRefSkeleton().GetNum(), Valid, RiderSK ? 1 : 0);
+	const int32 SaddleIdx = DragonSK->GetRefSkeleton().FindBoneIndex(TEXT("Saddle"));
+	if (SaddleIdx != INDEX_NONE)
+	{
+		UE_LOG(LogTemp, Display, TEXT("DRAGON_RIG saddle ref local=%s socketscale=%s"), *DragonSK->GetRefSkeleton().GetRefBonePose()[SaddleIdx].ToString(),
+			*DragonMesh->GetSocketTransform(TEXT("Saddle")).GetScale3D().ToString());
+	}
 }
 
 void ADragonFlightPawn::FindWorldWaterAndFog()
@@ -321,6 +409,7 @@ void ADragonFlightPawn::ExitWater()
 	FlapIntensity = 1.9f;
 	FlapPhase = HALF_PI;
 	WingBeatTimer = 0.5f;
+	++WingBeatCount;
 	const FVector Dir = FRotator(FlightPitch, FlightYaw, 0.f).Vector();
 	ADragonSplash::Spawn(GetWorld(), GetActorLocation(), 1.7f, true, Dir);
 	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW burst after %.2fs speed=%.0fkmh"), UnderwaterTime, GetSpeedKmh());
@@ -338,12 +427,14 @@ void ADragonFlightPawn::UpdateReviewMode(float Dt)
 	if (T > 4.f && T < 11.f)
 	{
 		CameraBoom->SetUsingAbsoluteRotation(true);
+		CameraBoom->bUsePawnControlRotation = false; // otherwise the control rotation overrides the orbit
 		const float OrbitYaw = T < 7.5f ? 150.f : 95.f;
 		CameraBoom->SetWorldRotation(FRotator(T < 7.5f ? -8.f : -22.f, FlightYaw + OrbitYaw, 0.f));
 	}
 	else if (CameraBoom->IsUsingAbsoluteRotation())
 	{
 		CameraBoom->SetUsingAbsoluteRotation(false);
+		CameraBoom->bUsePawnControlRotation = true;
 	}
 	if (T > 11.f && T < 17.f) { Aim.Yaw += 28.f * Dt; Aim.Pitch = -6.f; }
 	if (T > 17.f && T < 23.f) { bBoosting = true; Aim.Pitch = -32.f; }
@@ -586,6 +677,7 @@ void ADragonFlightPawn::OnWingBeat(const FInputActionValue&)
 	}
 	if (WingBeatTimer > 0.f || Stamina < 3.f) { return; }
 	WingBeatTimer = 0.42f;
+	++WingBeatCount;
 	Speed += WingBeatSpeedGain;
 	VerticalBoost = FMath::Min(VerticalBoost + WingBeatLift, WingBeatLift * 1.6f);
 	Stamina -= 3.f;
@@ -810,6 +902,7 @@ void ADragonFlightPawn::UpdateFlight(float Dt)
 void ADragonFlightPawn::UpdateAnimation(float Dt)
 {
 	AnimTime += Dt;
+	if (bRigged) { return; } // the rigged dragon is animated by UDragonAnimInstance
 	const bool bDiving = FlightPitch < -18.f && ThrottleInput <= 0.f && !bBoosting;
 	float Rate = 0.85f, Intensity = 0.8f;
 	if (ThrottleInput > 0.1f) { Rate = 1.25f; Intensity = 1.0f; }
@@ -874,6 +967,8 @@ void ADragonFlightPawn::UpdateCamera(float Dt)
 	// Burst: swing the camera back fast so the exit splash and the launching dragon share the frame.
 	CameraBoom->TargetArmLength = FMath::FInterpTo(CameraBoom->TargetArmLength, ArmTarget, Dt, 2.f + 6.f * BurstAmount);
 	CameraBoom->SocketOffset.Z = FMath::Lerp(560.f, 160.f, UnderwaterAmount);
+	const bool bOrbit = CameraBoom->IsUsingAbsoluteRotation(); // review beauty orbit: frame the whole dragon
+	if (bOrbit) { CameraBoom->SocketOffset.Z = 0.f; CameraBoom->TargetArmLength = BaseArmLength + 600.f; }
 	CamLagHoldTime = FMath::Max(0.f, CamLagHoldTime - Dt);
 	CameraBoom->CameraLagSpeed = CamLagHoldTime > 0.f ? CamLagHoldSpeed : 9.f;
 	CameraBoom->CameraLagMaxDistance = CamLagHoldTime > 0.f ? CamLagHoldMaxDistance : 900.f;
@@ -882,7 +977,7 @@ void ADragonFlightPawn::UpdateCamera(float Dt)
 	const float Amp = Speed01 * Speed01 * 5.f + ShakeTime * 45.f + DiveAmount * (3.f + 16.f * Over01) + BurstAmount * 10.f;
 	const float T = AnimTime;
 	Camera->SetRelativeLocation(FVector(0.f, (FMath::Sin(T * 31.f) + 0.5f * FMath::Sin(T * 17.3f)) * Amp, FMath::Cos(T * 27.f) * Amp));
-	Camera->SetRelativeRotation(FRotator(-9.f, 0.f, Bank * 0.12f)); // look down onto the dragon's back
+	Camera->SetRelativeRotation(FRotator(bOrbit ? 0.f : -9.f, 0.f, Bank * 0.12f)); // look down onto the dragon's back
 
 	UpdateUnderwaterView(Dt);
 }
