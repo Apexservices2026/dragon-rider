@@ -15,6 +15,7 @@
   --ui: "Barlow Condensed", "Arial Narrow", system-ui, sans-serif;
   color-scheme: dark;
 }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body { background: var(--night); color: var(--frost); font-family: var(--ui); overflow: hidden; touch-action: none; user-select: none; -webkit-user-select: none; }
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
@@ -116,12 +117,14 @@ body.touch #gauge { bottom: calc(env(safe-area-inset-bottom, 0px) + 170px); }
       <dt>Ctrl / right mouse</dt><dd>Hold to power-dive (C works too)</dd>
       <dt>Q / E</dt><dd>Barrel roll</dd>
     </dl>
+    <p class="note" id="loadMsg" role="status">Loading dragon&hellip;</p>
     <button id="fly" type="button">FLY</button>
     <p class="note">Dive to build speed, climb to trade it back for height. Power-dive into the sea to plunge under, then burst back out. Arrow keys also steer.</p>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
 <script>
 (() => {
 'use strict';
@@ -373,6 +376,94 @@ function updateCape(t, speed01) {
   capeGeo.attributes.position.needsUpdate = true; capeGeo.computeVertexNormals();
 }
 
+// ---------------------------------------------------------------- rigged dragon + rider (Dragon.glb + Rider.glb, or a combined DragonRider.glb)
+// The glTFs are already x forward / y up / metres (Blender +X forward, +Z up -> glTF Y-up keeps +X forward), so no axis fix is needed.
+// Until they load, or if loading fails, the primitive dragon above stays in place.
+let real = null;
+const loadMsg = document.getElementById('loadMsg');
+const tq = new THREE.Quaternion();
+function loadModels() {
+  if (!THREE.GLTFLoader) { loadMsg.textContent = 'Couldn’t load the dragon model, so you’re flying the simple stand-in.'; return; }
+  const loader = new THREE.GLTFLoader(), prog = {};
+  const onProg = key => e => {
+    prog[key] = [e.loaded, e.total || 0]; let a = 0, b = 0; for (const k in prog) { a += prog[k][0]; b += prog[k][1]; }
+    loadMsg.textContent = 'Loading dragon… ' + (b ? Math.min(99, Math.round(a / b * 100)) + '%' : (a / 1e6).toFixed(1) + ' MB');
+  };
+  const get = (url, key) => new Promise((res, rej) => loader.load(url, res, onProg(key), rej));
+  const getRider = () => get('./Rider.glb', 'r').catch(e => { console.warn('Rider.glb failed; using the simple rider', e); return null; });
+  get('./DragonRider.glb', 'c')
+    .then(g => g.scene.getObjectByName('RiderRig') ? [g, g] : getRider().then(r => [g, r]),
+      () => { delete prog.c; return Promise.all([get('./Dragon.glb', 'd'), getRider()]); })
+    .then(([d, r]) => { setupModels(d, r); loadMsg.hidden = true; })
+    .catch(e => { console.warn('Dragon model failed to load; keeping the simple dragon', e); loadMsg.textContent = 'Couldn’t load the dragon model, so you’re flying the simple stand-in.'; });
+}
+function setupModels(dg, rg) {
+  const model = dg.scene;
+  let skel = null;
+  model.traverse(o => { if (!skel && o.isSkinnedMesh && o.skeleton.bones.some(b => /^Saddle(_\d+)?$/.test(b.name))) skel = o.skeleton; });
+  if (!skel) throw new Error('no Saddle bone in the dragon');
+  const bone = n => skel.bones.find(b => b.name === n || b.name.replace(/_\d+$/, '') === n);
+  const saddle = bone('Saddle');
+  const act = {}, mixer = new THREE.AnimationMixer(model);
+  for (const n of ['Glide', 'Flap', 'DiveTuck', 'Hover', 'WingBeatStrong']) {
+    const c = THREE.AnimationClip.findByName(dg.animations, n); if (!c) continue;
+    act[n] = mixer.clipAction(c); act[n].play(); act[n].setEffectiveWeight(0);
+  }
+  if (!act.Glide) throw new Error('no Glide action in the dragon');
+  act.Glide.setEffectiveWeight(1);
+  if (act.WingBeatStrong) { act.WingBeatStrong.setLoop(THREE.LoopOnce, 1); act.WingBeatStrong.clampWhenFinished = true; act.WingBeatStrong.time = act.WingBeatStrong.getClip().duration; }
+
+  // Rider: the glTF rig (from Rider.glb, or RiderRig inside the combined file), or the primitive rider if Rider.glb failed.
+  let riderObj = rg ? (rg === dg ? model.getObjectByName('RiderRig') : rg.scene) : rider, riderMixer = null;
+  if (rg) {
+    const idle = THREE.AnimationClip.findByName(rg.animations, 'RiderIdle');
+    if (idle) { riderMixer = new THREE.AnimationMixer(riderObj); riderMixer.clipAction(idle).play(); }
+  }
+  // Rest pose (model not yet in the scene, so world = model space): the saddle bone's rest rotation is the Blender bone-frame
+  // artefact (-90 deg about x); the rider sits at the saddle with zero offset and identity rest rotation, so undo it.
+  model.updateMatrixWorld(true);
+  const saddleFix = new THREE.Matrix4().makeRotationFromQuaternion(saddle.getWorldQuaternion(new THREE.Quaternion()).invert());
+  // Head-into-turn look: yaw the last neck bones about the dragon's up axis, expressed in each bone's local frame at rest.
+  const look = ['Neck04', 'Neck05', 'Neck06', 'Head'].map(bone).filter(Boolean)
+    .map(b => ({ b, axis: new THREE.Vector3(0, 1, 0).applyQuaternion(b.getWorldQuaternion(new THREE.Quaternion()).invert()).normalize() }));
+
+  // Materials: GLTFLoader already marks base colour + emissive maps sRGB and normal/ORM maps linear.
+  const aniso = Math.min(4, renderer.capabilities.getMaxAnisotropy()), maxTex = isTouch ? 1024 : 2048, seen = new Set();
+  const shrink = t => {
+    if (!t || seen.has(t)) return; seen.add(t); t.anisotropy = aniso;
+    const img = t.image; if (!img || Math.max(img.width, img.height) <= maxTex) return;
+    const s = maxTex / Math.max(img.width, img.height), c = document.createElement('canvas');
+    c.width = Math.round(img.width * s); c.height = Math.round(img.height * s); c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+    t.image = c; t.needsUpdate = true; if (img.close) img.close();
+  };
+  const prep = o => {
+    if (!o.isMesh) return;
+    o.frustumCulled = false; // skinned: the bind-pose bounds don't follow the wings
+    const g = o.geometry; if (g.attributes.uv && !g.attributes.uv2) g.setAttribute('uv2', g.attributes.uv); // r128 aoMap reads uv2
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      ['map', 'normalMap', 'roughnessMap', 'metalnessMap', 'emissiveMap'].forEach(k => shrink(m[k]));
+      if (m.metalnessMap && !m.aoMap) m.aoMap = m.metalnessMap; // ORM texture: R = occlusion
+      if (m.emissiveMap) m.emissiveIntensity = /wing/i.test(m.name) ? 3.2 : /rider/i.test(m.name) ? 1.5 : 2.5; // membrane veins, eyes, runes glow
+      m.envMapIntensity = .75; // reflections come from scene.environment like the rest of the page
+    }
+  };
+  model.traverse(prep);
+  if (rg) riderObj.traverse(prep);
+
+  // Commit: swap the primitive dragon for the rigged one; the rider follows the saddle bone each frame.
+  dragon.remove(body); dragon.add(model);
+  if (riderObj.parent) riderObj.parent.remove(riderObj);
+  riderObj.matrixAutoUpdate = false; scene.add(riderObj);
+  real = { act, mixer, riderMixer, riderObj, saddle, saddleFix, look, prim: !rg, strongOn: false, w: { Glide: 1, Flap: 0, DiveTuck: 0, Hover: 0 }, sw: 0 };
+}
+// One-shot strong wing beat (on each wing beat and on the water burst); retriggers only once the previous one is mostly done.
+function strongBeat() {
+  const a = real && real.act.WingBeatStrong; if (!a) return;
+  if (real.strongOn && a.time < a.getClip().duration * .55) return;
+  a.reset().play(); real.strongOn = true;
+}
+loadModels();
+
 // Wind streaks for a sense of speed.
 const STREAKS = 260;
 const streakGeo = new THREE.BufferGeometry();
@@ -456,7 +547,13 @@ addEventListener('keyup', e => { keys.delete(e.code); if (e.code === 'ShiftLeft'
 addEventListener('blur', () => { keys.clear(); st.boosting = false; diveStop(); });
 const SENS = 0.11;
 let locked = false, dragFrom = null;
-document.addEventListener('pointerlockchange', () => { locked = document.pointerLockElement === canvas; if (!locked && st.flying && !isTouch) pause(); });
+let lockSince = 0;
+document.addEventListener('pointerlockchange', () => {
+  const was = locked; locked = document.pointerLockElement === canvas;
+  if (locked) { lockSince = performance.now(); return; }
+  // Only pause when a lock the player actually had is released (Esc); a lock the frame drops at once falls back to drag-to-steer.
+  if (was && st.flying && !isTouch && performance.now() - lockSince > 600) pause();
+});
 canvas.addEventListener('mousemove', e => {
   if (!st.flying) return;
   if (locked) { st.aimYaw -= e.movementX * SENS; st.aimPitch -= e.movementY * SENS; if (Math.abs(e.movementX) + Math.abs(e.movementY) > 2) st.lookT = st.t; }
@@ -476,7 +573,7 @@ function wingBeat() {
   if (st.under) { if (st.uwT > .2) st.burstRise = true; return; } // under water: burst for the surface
   if (st.beatTimer > 0 || st.stam < 3) return;
   st.beatTimer = .42; st.speed += S.beatGain; st.vBoost = Math.min(st.vBoost + S.beatLift, S.beatLift * 1.6); st.stam -= 3;
-  st.flapInt = 1.7; st.flap = Math.PI / 2; thump();
+  st.flapInt = 1.7; st.flap = Math.PI / 2; thump(); strongBeat();
 }
 
 // Touch: drag anywhere = virtual stick; buttons for beat / boost / rolls.
@@ -674,13 +771,43 @@ function exitWater() {
   st.vBoost = S.burstLift + Math.max(0, st.buoyV * .4); st.buoyV = 0;
   st.aimPitch = 12; st.pullOut = 1.4; st.ignore = .6; st.burst = 1; st.uwAmt = 0;
   st.shake = .8; st.flapInt = 1.9; st.flap = Math.PI / 2; st.beatTimer = .5;
-  st.lagHold = .5; st.lagRate = 5; st.lagMax = 25;
+  st.lagHold = .5; st.lagRate = 5; st.lagMax = 25; strongBeat();
   dir(st.yaw, st.pitch, fwd);
   emitSplash(st.pos.x, st.pos.z, 1.7, true, fwd.x, fwd.z); whoosh(.9); thump();
 }
 
 // ---------------------------------------------------------------- animation (port of UpdateAnimation)
+// Rigged dragon: cross-fade the glTF actions by flight state, like an animation blueprint state machine.
+function animateReal(dt) {
+  const R = real, A = R.act, W = R.w;
+  const thr = Math.max(0, inp.throttle), climb = smooth((st.pitch - 6) / 18);
+  let effort = Math.max(thr * .75, climb, st.boosting ? 1 : 0, st.beatTimer > 0 ? .9 : 0, smooth((st.vBoost - 3) / 8) * .7);
+  if (st.pitch < -12 && !st.boosting && thr <= 0 && st.beatTimer <= 0) effort *= .15;   // shallow dive: glide
+  const tuck = Math.max(st.dive, st.uwAmt);                                              // power dive / underwater: tucked
+  const hover = st.under ? 0 : smooth((22 - st.speed) / 8);                               // nearly stalled: hover beats
+  const tgt = { DiveTuck: tuck, Hover: (1 - tuck) * hover, Flap: (1 - tuck) * (1 - hover) * effort, Glide: (1 - tuck) * (1 - hover) * (1 - effort) };
+  const k = expA(5, dt);
+  for (const n in W) W[n] += (tgt[n] - W[n]) * k; // same rate for all, so the weights keep summing to 1
+  // One-shot strong beat layered over the loops: fast in, eased out before its end.
+  const S1 = A.WingBeatStrong;
+  if (S1 && R.strongOn && S1.time >= S1.getClip().duration - .3) R.strongOn = false;
+  R.sw += ((R.strongOn ? 1 : 0) - R.sw) * expA(R.strongOn ? 16 : 6, dt);
+  for (const n in W) if (A[n]) A[n].setEffectiveWeight(W[n] * (1 - R.sw));
+  if (S1) { S1.setEffectiveWeight(R.sw); S1.timeScale = 1.25; }
+  if (A.Flap) A.Flap.timeScale = lerp(.85, 1.6, effort) * (st.boosting ? 1.1 : 1);
+  if (A.DiveTuck) A.DiveTuck.timeScale = lerp(1, .65, st.uwAmt); // slow swim stroke under water
+  R.mixer.update(dt);
+  if (R.riderMixer) R.riderMixer.update(dt);
+  // Head into the turn, on top of the animation.
+  const ang = clamp(st.yawRate * .12, -18, 18) * DEG / Math.max(1, R.look.length);
+  for (const l of R.look) l.b.quaternion.multiply(tq.setFromAxisAngle(l.axis, ang));
+  // Rider rides the saddle bone (zero offset, identity rest rotation).
+  dragon.updateMatrixWorld(true);
+  R.riderObj.matrix.multiplyMatrices(R.saddle.matrixWorld, R.saddleFix); R.riderObj.matrixWorldNeedsUpdate = true;
+  if (R.prim) updateCape(st.t, smooth((st.speed - S.slow) / (S.boost - S.slow)));
+}
 function animate(dt) {
+  if (real) return animateReal(dt);
   const diving = st.pitch < -18 && inp.throttle <= 0 && !st.boosting;
   let rate = .85, inten = .8;
   if (inp.throttle > .1) { rate = 1.25; inten = 1; }
@@ -724,7 +851,9 @@ function updateCamera(dt) {
   const s01 = smooth((st.speed - S.slow) / (S.boost - S.slow)), over01 = smooth((st.speed - S.boost) / (S.diveMax - S.boost));
   const fovT = lerp(S.fov, S.fovMax, Math.pow(s01, 1.3)) + S.diveFov * st.dive * (.35 + .65 * over01) + st.burst * 10 - st.uwAmt * 8;
   camera.fov = lerp(camera.fov, fovT, expA(2.5 + st.burst * 3, dt));
-  arm = lerp(arm, (S.arm + S.armExtra * s01) * lerp(1, S.diveArm, st.dive) * lerp(1, .6, st.uwAmt), expA(2, dt));
+  // Portrait screens: pull back so the ~18 m wingspan still fits across the narrow view.
+  const narrow = lerp(1, 1.45, smooth((1.15 - camera.aspect) / .6));
+  arm = lerp(arm, (S.arm + S.armExtra * s01) * narrow * lerp(1, S.diveArm, st.dive) * lerp(1, .7, st.uwAmt), expA(2, dt));
   dir(st.camYaw, st.camPitch, camFwd);
   camTarget.copy(st.pos).addScaledVector(camFwd, -arm).addScaledVector(UP, lerp(S.socket, 1.6, st.uwAmt));
   st.lagHold = Math.max(0, st.lagHold - dt);
