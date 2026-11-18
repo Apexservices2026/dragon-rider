@@ -4,7 +4,7 @@
 
 - GitHub repository: https://github.com/Apexservices2026/dragon-rider
 - Repository remains public and unchanged by this work; nothing was pushed.
-- Local project: `C:\Users\smart\Documents\Codex\DragonRider`
+- Local project: the repository root on the owner's PC (full path kept out of the repo)
 - Current branch: `codex/flight-foundation`
 - Local commit: `bb1713c Start dragon flight pawn scaffold`
 - Unreal Engine 5.8 project: `Game\DragonRider\DragonRider.uproject`, based on the Third Person Blueprint template.

@@ -18,3 +18,10 @@ Thumbs.db
 # Unreal per-user editor preferences
 **/Config/DefaultEditorPerProjectUserSettings.ini
 __pycache__/
+
+# Epic Third Person template content: not redistributed in this public repo.
+# Recreate it by adding the Third Person template content to the project in Unreal (Content Drawer > Add > Add Feature or Content Pack).
+Game/DragonRider/Content/Characters/
+Game/DragonRider/Content/LevelPrototyping/
+Game/DragonRider/Content/Input/
+Game/DragonRider/Content/ThirdPerson/
