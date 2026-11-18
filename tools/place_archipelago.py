@@ -220,6 +220,7 @@ def build_village(name, cx, cy, clan, n_huts, n_ships):
     for k in range(sections + 1):
         px, py = sx + wx * (250 + 500 * k), sy + wy * (250 + 500 * k)
         place('SM_PierEnd' if k == sections else 'SM_PierSection', px, py, 0, sea_deg, '%s_Pier%d' % (name, k))
+        log('%s pier %d at (%.0f, %.0f) m over ground %.2f m' % (name, k, px / 100, py / 100, height(px, py) / 100))
     end_x, end_y = sx + wx * (250 + 500 * sections), sy + wy * (250 + 500 * sections)
     # Moored ships alongside the pier, bows out to sea; pushed out until the hull has water under it.
     for k in range(n_ships):
@@ -231,6 +232,7 @@ def build_village(name, cx, cy, clan, n_huts, n_ships):
             if max(footprint(mx, my, sea_deg, 1150, 330)) < -160:
                 break
         ship(mx, my, sea_deg + rng.uniform(-4, 4), clan == 'B', 0.0, '%s_Ship%d' % (name, k), 'Archipelago/Villages')
+        log('%s moored ship %d at (%.0f, %.0f) m, ground %.1f m; pier end (%.0f, %.0f) m' % (name, k, mx / 100, my / 100, height(mx, my) / 100, end_x / 100, end_y / 100))
 
     # Palisade arc around the landward side, gate facing inland; watchtower at the seaward end of the arc.
     R = max(math.hypot(px - cx, py - cy) + pr for px, py, pr in placed) + 900
@@ -365,6 +367,19 @@ for act in actors.get_all_level_actors():
         m.set_editor_property('tags', [unreal.Name(t) for t in (
             'ReviewLeg:%02d' % (legs_n + 1), 'Name:forest_village_close', 'Dur:5.0', 'Shots:3.5', 'Pitch:-14.0', 'Speed:40',
             'AimAt:%.0f,%.0f,%.0f' % (p.x, p.y, p.z + 300.0))])
+        break
+for act in actors.get_all_level_actors():
+    if act.get_actor_label() == 'Lundvik_Pier4':
+        p = act.get_actor_location()
+        f = act.get_actor_forward_vector()   # pier runs out to sea along +X
+        r = unreal.Vector(-f.y, f.x, 0.0)
+        loc = unreal.Vector(p.x + f.x * 5000.0 + r.x * 5000.0, p.y + f.y * 5000.0 + r.y * 5000.0, 2500.0)
+        m = actors.spawn_actor_from_class(unreal.TargetPoint, loc, unreal.Rotator(0, 0, 0))
+        m.set_actor_label('Review_%02d_lundvik_pier' % (legs_n + 2))
+        m.set_folder_path('Archipelago/Villages')
+        m.set_editor_property('tags', [unreal.Name(t) for t in (
+            'ReviewLeg:%02d' % (legs_n + 2), 'Name:lundvik_pier', 'Dur:4.0', 'Shots:2.5', 'Pitch:-18.0', 'Speed:30',
+            'AimAt:%.0f,%.0f,%.0f' % (p.x - f.x * 1500.0, p.y - f.y * 1500.0, 100.0))])
         break
 
 always_loaded()

@@ -210,7 +210,10 @@ mel.connect_material_property(col, '', MP.MP_BASE_COLOR)
 
 rough = G.lerp(G.lerp(G.lerp(G.k(0.92), G.k(0.86), grass_mask), G.k(0.82), sand_mask), G.k(0.55), snow_mask)
 rough = G.lerp(rough, G.k(0.28), wet)
+rough = G.lerp(rough, G.k(1.0), G.p('RoughnessToOne', 0.75))   # no grazing glare toward the low sun
 mel.connect_material_property(rough, '', MP.MP_ROUGHNESS)
+# Low specular: at 0.5 sunlit grass glared cream when looking toward the low sun (same as tune_archipelago_material.py).
+mel.connect_material_property(G.p('Specular', 0.15), '', MP.MP_SPECULAR)
 
 # Normals (only with textures): blend per-layer normal maps by the same masks.
 flatn = G.k3((0.0, 0.0, 1.0))
@@ -229,7 +232,7 @@ dist = G.node(unreal.MaterialExpressionLength)
 mel.connect_material_expressions(dvec, '', dist, '')
 lava_in = G.mul(G.ramp(dist, G.p('LavaRadiusCm', 30000.0, 'Lava'), G.sub(G.p('LavaRadiusCm', 30000.0, 'Lava'), G.k(4000.0))),
                 G.ramp(z, G.p('LavaTopCm', 0.0, 'Lava'), G.sub(G.p('LavaTopCm', 0.0, 'Lava'), G.k(1500.0))))
-lava_n = G.noise(0.0011, 4, 0.0, 1.0)
+lava_n = G.noise(0.00025, 5, 0.0, 1.0)   # ~40 m crust plates (tune_archipelago_material.py does the same in place)
 lava_glow = G.mul(G.mul(G.pc('LavaColor', (1.0, 0.28, 0.04), 'Lava'), G.p('LavaGlow', 0.0, 'Lava')),
                   G.mul(lava_in, G.mul(G.sat(G.add(G.mul(lava_n, G.k(3.0)), G.k(-1.2))), G.sat(G.add(G.mul(lava_n, G.k(3.0)), G.k(-1.2))))))   # glowing cracks in a dark crust
 mel.connect_material_property(lava_glow, '', MP.MP_EMISSIVE_COLOR)
@@ -261,12 +264,12 @@ MIS = {
                        dict(RockColor=(0.045, 0.047, 0.052), RockColorWarm=(0.06, 0.058, 0.058), GrassColor=(0.05, 0.06, 0.03),
                             SnowColor=(0.74, 0.8, 0.88))),
     'ember': make_mi('MI_Land_Ember', dict(SnowLineCm=1e7, GrassTopCm=25000.0, GrassFlatness=0.9, SandTopCm=600.0,
-                                          LavaGlow=(1.5 if ember_c else 0.0),
+                                          LavaGlow=(2.5 if ember_c else 0.0),
                                           # a 200 m lake whose edge follows the floor's bumps (glow below floor + 10 m);
                                           # tools/place_landmarks.py sets the same values and puts the dragon lair beside it
                                           LavaRadiusCm=20000.0 if ember_c else 0.0,
                                           LavaTopCm=(ember_c['z'] * 100.0 + 1000.0) if ember_c else 0.0),
-                     dict(RockColor=(0.022, 0.02, 0.02), RockColorWarm=(0.06, 0.03, 0.02), SandColor=(0.018, 0.017, 0.017),
+                     dict(RockColor=(0.022, 0.02, 0.02), RockColorWarm=(0.06, 0.03, 0.02), SandColor=(0.018, 0.017, 0.017), LavaColor=(1.0, 0.16, 0.02),
                           GrassColor=(0.04, 0.045, 0.02), HeathColor=(0.05, 0.035, 0.025),
                           LavaCentre=((ember_c['x'] * 100.0, ember_c['y'] * 100.0, 0.0) if ember_c else (0, 0, 0)))),
 }
@@ -371,7 +374,7 @@ sun = spawn(unreal.DirectionalLight, (0, 0, 500000), (-15.0, 52.0, 0), 'Sun', 'A
 lc = sun.light_component
 for k, v in (('intensity', 9.0), ('light_color', unreal.Color(255, 226, 190, 255)), ('atmosphere_sun_light', True),
              ('cast_shadows', True), ('cast_cloud_shadows', True), ('enable_light_shaft_bloom', True), ('bloom_scale', 0.25),
-             ('dynamic_shadow_distance_movable_light', 60000.0), ('volumetric_scattering_intensity', 1.5)):
+             ('dynamic_shadow_distance_movable_light', 60000.0), ('volumetric_scattering_intensity', 0.35)):   # 1.5 drew cream fog bands over sunlit slopes
     lc.set_editor_property(k, v)
 lc.set_mobility(unreal.ComponentMobility.MOVABLE)
 
@@ -397,7 +400,7 @@ fc = fog.component
 # the far-ocean skirt still darkens the sea line.
 for k, v in (('fog_density', 0.0035), ('fog_height_falloff', 0.2), ('fog_max_opacity', 0.9),
              ('fog_inscattering_luminance', unreal.LinearColor(0.26, 0.35, 0.48, 1)),
-             ('directional_inscattering_luminance', unreal.LinearColor(0.7, 0.46, 0.26, 1)),
+             ('directional_inscattering_luminance', unreal.LinearColor(0.45, 0.32, 0.2, 1)),
              ('directional_inscattering_exponent', 10.0), ('enable_volumetric_fog', True),
              ('volumetric_fog_extinction_scale', 0.25), ('start_distance', 15000.0)):
     fc.set_editor_property(k, v)
@@ -496,7 +499,7 @@ if 'village' in P.get('main', {}):
 leg('horizon east', C['main'][0] - 3000.0, C['main'][1], 1600.0, 0.0, 0.0, dur=4.0, shots=(3.0,))
 leg('horizon west', C['main'][0] - 6500.0, C['main'][1] + 2000.0, 1600.0, 180.0, 0.0, dur=4.0, shots=(3.0,))
 # Plunge check: dive into the open sea between the islands, burst back out.
-leg('plunge', (C['main'][0] + C.get('ember', C['main'])[0]) / 2.0 + 1500.0, 6500.0, 380.0, 0.0, -10.0, dur=9.0,
+leg('plunge', 7600.0, 7700.0, 380.0, 0.0, -10.0, dur=9.0,   # deep open sea between the main and ember isles
     shots=(2.2, 4.0, 5.2, 7.5), extra=('Dive:0.6', 'Orbit:150,-10'))
 # The fleet leg is added by tools/place_archipelago.py, which knows where the ships are.
 # Overview of the main island's east half from high up (checks every landscape section streams in).

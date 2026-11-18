@@ -10,6 +10,7 @@ linear roughness; iron gets metallic 0.6). Meshes get Nanite on and simple box c
 """
 import json
 import os
+import sys
 import unreal
 
 ROOT = '/Game/DragonRider/World'
@@ -19,14 +20,14 @@ MESH = ROOT + '/Meshes'
 PROJECT_DIR = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())
 SRC = os.path.join(PROJECT_DIR, 'Saved', 'Generated', 'World')
 
+sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_DIR, '..', '..', 'tools')))
+import collision_rules  # noqa: E402
+
 eal = unreal.EditorAssetLibrary
 mel = unreal.MaterialEditingLibrary
 tools = unreal.AssetToolsHelpers.get_asset_tools()
 MP = unreal.MaterialProperty
 
-# Meshes that get a simple box collision (buildings, piers, palisade); small props and ship parts get none.
-COLLIDE = {'SM_Longhouse', 'SM_Hut', 'SM_Storehouse', 'SM_Smithy', 'SM_PierSection', 'SM_PierEnd',
-           'SM_PalisadeWall', 'SM_PalisadeGate', 'SM_Watchtower'}
 METALLIC = {'M_Iron': 0.6}
 # Per-set colour trims so the kit sits in the graded golden-hour scene (turf read as neon green unmodified).
 TINT = {'M_Turf': (0.46, 0.43, 0.3)}
@@ -201,12 +202,15 @@ for fbx in fbx_files:
     nanite = mesh.get_editor_property('nanite_settings')
     nanite.set_editor_property('enabled', True)
     mesh.set_editor_property('nanite_settings', nanite)
-    if name in COLLIDE:
-        # (the StaticMeshEditorSubsystem replacement is not available inside the commandlet)
-        unreal.EditorStaticMeshLibrary.add_simple_collisions(mesh, unreal.ScriptCollisionShapeType.BOX)
+    collision_rules.apply(mesh)   # tools/collision_rules.py: box on buildings, piers and palisade
     eal.save_loaded_asset(mesh)
     b = mesh.get_bounding_box()
     log('%s slots=%d missing=%s bbox_min=(%.0f,%.0f,%.0f) bbox_max=(%.0f,%.0f,%.0f) tris=%d' % (
         name, len(mesh.static_materials), missing, b.min.x, b.min.y, b.min.z, b.max.x, b.max.y, b.max.z, mesh.get_num_triangles(0)))
 
+# Drop the machine-specific source paths Interchange stores in the import data (tools/scrub_import_paths.py).
+import sys as _sys
+_sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_DIR, '..', '..', 'tools')))
+import scrub_import_paths
+scrub_import_paths.scrub_folders([ROOT])
 unreal.log('WORLD_KIT_IMPORTED')

@@ -332,6 +332,17 @@ void ADragonFlightPawn::FindWorldWaterAndFog()
 		UStaticMeshComponent* SM = It->GetStaticMeshComponent();
 		if (SM && IsWaterComponent(SM)) { break; }
 	}
+	// The archipelago's far-ocean skirt lies 0.8 m under the sea plane. It is scenery only: if the dragon's sweep hits
+	// it, a plunge bounces off it at the surface instead of going under.
+	for (TActorIterator<AStaticMeshActor> It(GetWorld()); It; ++It)
+	{
+		UStaticMeshComponent* SM = It->GetStaticMeshComponent();
+		if (SM && SM != WaterComponent && SM->GetStaticMesh() && SM->GetStaticMesh()->GetName() == TEXT("Plane")
+			&& It->GetActorLocation().Z < -10.f && It->GetActorLocation().Z > -500.f && SM->GetComponentScale().X > 100.f)
+		{
+			Collision->IgnoreComponentWhenMoving(SM, true);
+		}
+	}
 	for (TActorIterator<AExponentialHeightFog> It(GetWorld()); It; ++It)
 	{
 		WorldFog = It->GetComponent();

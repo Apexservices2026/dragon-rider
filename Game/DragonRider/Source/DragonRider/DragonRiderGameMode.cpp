@@ -86,8 +86,9 @@ void ADragonHUD::DrawHUD()
 		Canvas->DrawItem(DiveText);
 	}
 
-	// Underwater: depth readout and a breath bar (time until the dragon is forced back up).
-	if (Dragon->IsUnderwater())
+	// Underwater: depth readout and a breath bar (time until the dragon is forced back up). Only once it is actually
+	// below the surface: a plunge into shallow water can skim back up without ever going under.
+	if (Dragon->IsUnderwater() && Dragon->GetDepthMeters() > 0.5f)
 	{
 		const FLinearColor Sea(0.55f, 0.95f, 0.95f, 0.95f);
 		FCanvasTextItem Under(FVector2D(W * 0.5f, H * 0.2f), FText::FromString(FString::Printf(TEXT("UNDERWATER   %.0f m"), Dragon->GetDepthMeters())), Big, Sea);

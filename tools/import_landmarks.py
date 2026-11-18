@@ -15,6 +15,7 @@ Materials use the world kit's masters (/Game/DragonRider/World/Materials):
 """
 import json
 import os
+import sys
 import unreal
 
 WORLD = '/Game/DragonRider/World'
@@ -26,6 +27,9 @@ KIT_MAT = WORLD + '/Materials'
 PROJECT_DIR = unreal.Paths.convert_relative_path_to_full(unreal.Paths.project_dir())
 SRC = os.path.join(PROJECT_DIR, 'Saved', 'Generated', 'World')
 
+sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_DIR, '..', '..', 'tools')))
+import collision_rules  # noqa: E402
+
 eal = unreal.EditorAssetLibrary
 mel = unreal.MaterialEditingLibrary
 tools = unreal.AssetToolsHelpers.get_asset_tools()
@@ -33,9 +37,9 @@ MP = unreal.MaterialProperty
 
 EMISSIVE = {'M_LavaRock': 4.0, 'M_Obsidian': 5.0, 'M_Crystal': 1.5, 'M_Charred': 6.0, 'M_Runes': 0.8, 'M_Ice': 1.5}
 METALLIC = {'M_Iron': 0.6}
-COLLIDE = {'SM_MeadHall', 'SM_Gatehouse', 'SM_FortWall', 'SM_FortWallCurve15', 'SM_BeaconTower', 'SM_IceShrine',
-           'SM_RuneCircle', 'SM_DragonSkull', 'SM_DragonRibs', 'SM_ObsidianSpires_A', 'SM_ObsidianSpires_B',
-           'SM_WreckBow', 'SM_WreckStern'}
+# Collision rules live in tools/collision_rules.py (shared with import_world_kit.py).
+# Emissive tint per set (the ice glow map reads magenta in the golden-hour grade; tint it to icy blue).
+EMISSIVE_TINT = {'M_Ice': (0.25, 0.65, 1.0)}
 
 
 def log(msg):
@@ -84,7 +88,8 @@ def texture(png, kind):
     if kit:
         textures[name] = kit
         return kit
-    t = run_import(os.path.join(SRC, png), TEX, name)
+    half = os.path.join(SRC, 'half', png)          # 1024 px copy from tools/halve_landmark_textures.py, if made
+    t = run_import(half if os.path.exists(half) else os.path.join(SRC, png), TEX, name)
     if kind == 'normal':
         t.set_editor_property('compression_settings', unreal.TextureCompressionSettings.TC_NORMALMAP)
         t.set_editor_property('srgb', False)
@@ -177,7 +182,10 @@ for mname, files in sorted(sets.items()):
     if mname in shared and eal.does_asset_exist(kit_mi):
         instances[mname] = eal.load_asset(kit_mi)
         continue
-    bc, n, r = files[0], files[1], files[-1]
+    # files: BC, N, N_DX, R and (for glowing sets) E - pick each by its suffix, not by position
+    bc = next(f for f in files if f.endswith('_BC.png'))
+    n = next((f for f in files if f.endswith('_N.png')), files[1])
+    r = next((f for f in files if f.endswith('_R.png')), files[-1])
     n_dx = n.replace('_N.png', '_N_DX.png')
     mi = tools.create_asset('MI_' + mname[2:], MAT, unreal.MaterialInstanceConstant, unreal.MaterialInstanceConstantFactoryNew())
     if mname in translucent:
@@ -197,6 +205,8 @@ for mname, files in sorted(sets.items()):
         if mname in EMISSIVE and os.path.exists(os.path.join(SRC, e_png)):
             mel.set_material_instance_texture_parameter_value(mi, 'Emissive', texture(e_png, 'bc'))
             mel.set_material_instance_scalar_parameter_value(mi, 'EmissiveStrength', EMISSIVE[mname])
+            if mname in EMISSIVE_TINT:
+                mel.set_material_instance_vector_parameter_value(mi, 'EmissiveColor', unreal.LinearColor(*EMISSIVE_TINT[mname], 1.0))
     eal.save_loaded_asset(mi)
     instances[mname] = mi
 log('%d material instances (%d shared with the kit), %d textures' % (len(instances), len([m for m in instances if m in shared]), len(textures)))
@@ -234,12 +244,16 @@ for prop in LM['props']:
     nanite = mesh.get_editor_property('nanite_settings')
     nanite.set_editor_property('enabled', not is_water)     # Nanite can't draw translucent materials
     mesh.set_editor_property('nanite_settings', nanite)
-    if name in COLLIDE:
-        unreal.EditorStaticMeshLibrary.add_simple_collisions(mesh, unreal.ScriptCollisionShapeType.BOX)
+    kind, n_prims = collision_rules.apply(mesh)
     eal.save_loaded_asset(mesh)
     b = mesh.get_bounding_box()
-    log('%s slots=%d missing=%s nanite=%d size=(%.0f,%.0f,%.0f) tris=%d' % (
+    log('%s slots=%d missing=%s nanite=%d size=(%.0f,%.0f,%.0f) collision=%s/%d prims' % (
         name, len(mesh.static_materials), missing, 0 if is_water else 1, b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z,
-        mesh.get_num_triangles(0)))
+        kind, n_prims))
 
+# Drop the machine-specific source paths Interchange stores in the import data (tools/scrub_import_paths.py).
+import sys as _sys
+_sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_DIR, '..', '..', 'tools')))
+import scrub_import_paths
+scrub_import_paths.scrub_folders([ROOT])
 unreal.log('LANDMARKS_IMPORTED')

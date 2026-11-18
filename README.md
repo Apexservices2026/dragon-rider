@@ -58,6 +58,7 @@ Git Bash mangles `/Game/...` paths, so don't run these from Git Bash.
 4. `tools/build_opening_level.py`: rebuilds `/Game/DragonRider/Opening/` (terrain, sky, water, start point), then runs `tools/place_world.py` to place the villages and fleet.
 5. `tools/build_archipelago.py`: rebuilds `/Game/DragonRider/Archipelago/` (World Partition level, one Landscape per island, auto landscape material, sky, sea, start point, review route), then runs `tools/place_archipelago.py` (villages, fleet). It needs the C++ editor module `DragonRiderEditor` built (it creates the landscapes), and the commandlet must be run with `-AllowCommandletRendering` (the landscape heights are merged on the GPU).
 6. Island landmarks (Vertex's kit from `tools/blender/world/build_landmarks.py`):
+   - Optional, before importing: `tools/halve_landmark_textures.py` (run with Blender's bundled Python) writes 1024 px copies of the 2048 px rune-normal, rune-roughness and shingle maps, to keep Git LFS lean.
    - `tools/import_landmarks.py` imports them into `/Game/DragonRider/World/Landmarks`. It needs the Blender output; skip it if the committed meshes are fine.
    - `python -I tools/terrain/pick_landmark_sites.py` picks the sites and writes `Saved/Generated/Archipelago/landmarks.json`.
    - `tools/place_landmarks.py` places them in `Lvl_Archipelago`. It only adds and removes its own actors; it never rebuilds the landscapes. Step 5 recreates the level, so run `pick_landmark_sites.py` before step 5 (the forest village uses its sites) and `place_landmarks.py` again after every step-5 rebuild.
@@ -67,3 +68,9 @@ Each of these scripts deletes and recreates **only its own folder**.
 The older Codex builder scripts (`tools/build_flight_*.py`) refuse to overwrite their assets. Leave them alone.
 
 Epic's Third Person template content is not included; see `NOTICES.md`. Project history, decisions and next steps are in `notes/handoff.md`.
+
+### Asset hygiene and fixes that run in place
+
+- All three importers end by running `tools/scrub_import_paths.py`. Unreal's PNG importer stores the absolute source path, which includes your Windows user name, inside every texture asset; the scrub replaces it with a project-relative path. Run it on its own to clean assets that are already imported.
+- Collision rules for the kit and landmark meshes are in `tools/collision_rules.py`. Run it on its own to reapply them without reimporting.
+- `tools/tune_archipelago_material.py` applies landscape-material tweaks to an existing `Lvl_Archipelago` without rebuilding it.

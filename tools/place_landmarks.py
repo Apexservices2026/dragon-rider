@@ -63,7 +63,7 @@ log('removed %d previous landmark actors' % len(removed))
 meshes = {}
 def mesh(name):
     if name not in meshes:
-        meshes[name] = eal.load_asset(KIT + name)
+        meshes[name] = eal.load_asset('/Engine/BasicShapes/Cube' if name == 'Cube' else KIT + name)
         if not meshes[name]:
             raise RuntimeError('Missing landmark mesh %s - run tools/import_landmarks.py first' % name)
     return meshes[name]
@@ -96,6 +96,25 @@ def grounded(name, x, y, yaw, hx, hy, group, label, sink=0.0, n=3, lift=0.0, **k
 
 
 report = []
+CUBE = eal.load_asset('/Engine/BasicShapes/Cube')
+KIT_MAT = '/Game/DragonRider/World/Materials/'
+
+
+def seated(name, x, y, yaw, hx, hy, group, label, plinth_mi, n=3, pad=60.0, top_below=0.0, **kw):
+    """Seat a building at the UPHILL height of its footprint (nothing sinks into the slope) and fill the gap under
+    the downhill side with a plinth: an earth or dry-stone block from just under the piece down into the ground.
+    Returns (actor, height of the plinth's tallest side in cm)."""
+    fp = footprint(x, y, yaw, hx, hy, n)
+    lo, hi = min(fp), max(fp)
+    z = hi - 20.0
+    a = place(name, x, y, z, yaw, group, label, **kw)
+    if hi - lo > 30.0:
+        top = z - top_below
+        bottom = lo - 100.0
+        p = place('Cube', x, y, (top + bottom) / 2.0, yaw, group, label + '_Plinth',
+                  scale=((2 * hx + pad) / 100.0, (2 * hy + pad) / 100.0, (top - bottom) / 100.0))
+        p.static_mesh_component.set_material(0, eal.load_asset(KIT_MAT + plinth_mi))
+    return a, hi - lo
 
 # ---------------------------------------------------------------- forest: stronghold
 st = SITES['stronghold']
@@ -109,16 +128,17 @@ for k in range(n_seg):
     if abs((a - g + 180.0) % 360.0 - 180.0) < 12.0:
         continue  # gate gap
     x, y = cx + R * math.cos(math.radians(a)), cy + R * math.sin(math.radians(a))
-    _, b = grounded('SM_FortWall', x, y, a - 90.0, 400, 600, 'Stronghold', 'Stronghold_Wall%02d' % k, sink=30, lift=0.3)
+    # the rampart's own earth bank reaches 1.26 m below its origin, so its plinth starts just under that
+    _, b = seated('SM_FortWall', x, y, a - 90.0, 400, 520, 'Stronghold', 'Stronghold_Wall%02d' % k, 'MI_Turf', pad=0.0, top_below=110.0)
     worst = max(worst, b); walls += 1
 gx, gy = cx + R * math.cos(math.radians(g)), cy + R * math.sin(math.radians(g))
-_, b_gate = grounded('SM_Gatehouse', gx, gy, g, 400, 755, 'Stronghold', 'Stronghold_Gatehouse', sink=20, lift=0.25)
+_, b_gate = seated('SM_Gatehouse', gx, gy, g, 400, 755, 'Stronghold', 'Stronghold_Gatehouse', 'MI_Stone', pad=80.0)
 hall_yaw = st.get('hall_yaw_deg', g)
 if abs((hall_yaw - g + 180.0) % 360.0 - 180.0) > 90.0:
     hall_yaw += 180.0  # porch (+X) toward the gate
-hall, b_hall = grounded('SM_MeadHall', cx, cy, hall_yaw, 2600, 900, 'Stronghold', 'Stronghold_MeadHall', sink=10, n=5, lift=0.25)
+hall, b_hall = seated('SM_MeadHall', cx, cy, hall_yaw, 2600, 900, 'Stronghold', 'Stronghold_MeadHall', 'MI_Stone', n=5, pad=160.0)
 hall.set_editor_property('tags', [unreal.Name('DR_Landmark'), unreal.Name('Landmark_Stronghold')])
-report.append('stronghold at (%.0f, %.0f) m: %d wall segments (worst burial %.0f cm), gatehouse burial %.0f cm, hall burial %.0f cm' % (
+report.append('stronghold at (%.0f, %.0f) m: %d wall segments (tallest plinth %.0f cm), gatehouse plinth %.0f cm, hall plinth %.0f cm; nothing sinks uphill' % (
     st['x'], st['y'], walls, worst, b_gate, b_hall))
 
 # ---------------------------------------------------------------- forest: waterfall
@@ -148,6 +168,14 @@ pitch = math.degrees(math.atan2(run, drop))
 x, y = along(t_sheet)
 place('SM_WaterfallSheet', x, y, -60.0, wf['dir_deg'], 'Waterfall', 'Waterfall_Sheet', pitch=pitch,
       scale=(1.0, 1.6, length / 2415.0), collide=False)
+# The stream: a sheet laid flat on the gorge floor for 40 m upstream of the lip (pitch 90 lays the sheet's long
+# axis back upstream, face up), so there is water at the crest that pours over it; foam where it tips over.
+fz = height(*along(t_lip - 200))
+x, y = along(t_lip + 150)
+place('SM_WaterfallSheet', x, y, fz + 40.0, wf['dir_deg'], 'Waterfall', 'Waterfall_Stream', pitch=88.0,
+      scale=(1.0, 1.3, 4000.0 / 2415.0), collide=False)
+x, y = along(t_lip + 100)
+place('SM_WaterfallFoam', x, y, fz - 150.0, wf['dir_deg'], 'Waterfall', 'Waterfall_CrestFoam', scale=(0.45, 0.45, 0.45), collide=False)
 x, y = along(t_sheet + 500)
 place('SM_PlungeRocks', x, y, 0.0, wf['dir_deg'], 'Waterfall', 'Waterfall_PlungeRocks')
 x, y = along(t_sheet + 150)
@@ -205,8 +233,9 @@ mel = unreal.MaterialEditingLibrary
 mi = eal.load_asset('/Game/DragonRider/Archipelago/MI_Land_Ember')
 cal = ARCH.layout['islands']['ember']['pois']['caldera']
 if mi:
-    for k, v in (('LavaRadiusCm', SITES['lair']['lake_radius_m'] * 100.0), ('LavaTopCm', cal['z'] * 100.0 + 1000.0), ('LavaGlow', 1.5)):
+    for k, v in (('LavaRadiusCm', SITES['lair']['lake_radius_m'] * 100.0), ('LavaTopCm', cal['z'] * 100.0 + 1000.0), ('LavaGlow', 2.5)):
         mel.set_material_instance_scalar_parameter_value(mi, k, v)
+    mel.set_material_instance_vector_parameter_value(mi, 'LavaColor', unreal.LinearColor(1.0, 0.16, 0.02, 1.0))
     mel.update_material_instance(mi)
     eal.save_loaded_asset(mi)
     report.append('lava lake: radius %.0f m, glow below %.0f m' % (SITES['lair']['lake_radius_m'], cal['z'] + 10.0))
@@ -267,7 +296,7 @@ ex, ey = toward(cx, cy, g + 140, 30000)
 leg('stronghold hall', ex, ey, hz + 9000, (cx, cy, hz + 600), speed=70)
 wx, wy = along(t_sheet + 26000)
 mx, my = along((t_lip + t_base) / 2)
-leg('waterfall', wx + uy * 9000, wy - ux * 9000, 4500, (mx, my, drop * 0.45), speed=60)
+leg('waterfall', wx + uy * 9000, wy - ux * 9000, drop * 0.85, (mx, my, drop * 0.55), speed=40)   # level with the crest: the whole fall in view
 cz = height(rx, ry)
 ex, ey = toward(rx, ry, path_yaw + 180, 9000)
 leg('rune circle', ex, ey, cz + 3500, (rx, ry, cz + 300), speed=30)
@@ -276,8 +305,8 @@ ex, ey = toward(sx, sy, path_yaw + 200, 7000)
 leg('ice shrine', ex, ey, sz + 2500, (sx, sy, sz + 600), speed=30)
 cxl, cyl = SITES['lair']['centre_x'] * 100.0, SITES['lair']['centre_y'] * 100.0
 fz = height(px, py)
-ex, ey = toward(px, py, face, 15000)
-leg('dragon lair', ex, ey, fz + 9000, (px, py, fz + 300), speed=50)
+ex, ey = toward(px, py, face + 180, 9000)
+leg('dragon lair', ex, ey, fz + 6500, (px + fx * 4000, py + fy * 4000, fz), speed=30)
 seen = set()
 for p in SITES['coast']:
     if (p['island'], p['kind']) in seen:
@@ -289,6 +318,11 @@ for p in SITES['coast']:
         ex, ey = toward(x, y, p['sea_deg'], far)
         leg('%s %s' % (p['island'], p['kind']), ex, ey, height(x, y) + (2200 if p['kind'] == 'wreck' else 3500),
             (x, y, height(x, y) + 300), speed=30)
+for act in actors.get_all_level_actors():
+    if 'Name:plunge' in [str(t) for t in act.get_editor_property('tags')] and abs(act.get_actor_location().x - 760000.0) > 1.0:
+        act.set_actor_location(unreal.Vector(760000.0, 770000.0, 38000.0), False, True)   # same spot build_archipelago.py now uses
+        placed.append(act)
+        report.append('moved the plunge review leg to deep open sea (7.6, 7.7 km)')
 log('review legs now end at %d' % legs_n)
 
 for line in report:

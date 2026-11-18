@@ -7,6 +7,6 @@ public class DragonRiderEditor : ModuleRules
 	{
 		PCHUsage = PCHUsageMode.UseExplicitOrSharedPCHs;
 		PublicDependencyModuleNames.AddRange(new string[] { "Core", "CoreUObject", "Engine" });
-		PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "Landscape", "RenderCore" });
+		PrivateDependencyModuleNames.AddRange(new string[] { "UnrealEd", "Landscape", "RenderCore", "PhysicsUtilities", "PhysicsCore" });
 	}
 }

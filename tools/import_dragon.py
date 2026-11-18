@@ -215,4 +215,9 @@ for name in ('SK_Dragon', 'SK_Rider'):
     mesh.modify()
     eal.save_loaded_asset(mesh, only_if_is_dirty=False)
 eal.save_directory(ROOT, only_if_is_dirty=False, recursive=True)  # skeletons included (import tasks don't save)
+# Drop the machine-specific source paths Interchange stores in the import data (tools/scrub_import_paths.py).
+import sys as _sys
+_sys.path.insert(0, os.path.normpath(os.path.join(PROJECT_DIR, '..', '..', 'tools')))
+import scrub_import_paths
+scrub_import_paths.scrub_folders([ROOT])
 unreal.log('DRAGON_IMPORT_DONE')

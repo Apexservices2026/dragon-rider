@@ -147,7 +147,7 @@ h, X, Y, dx = load('ember', 2.0)
 rr_ = np.hypot(X - cal['x'], Y - cal['y'])
 rng_l = local_range(h, int(12 / dx))
 score = rng_l.copy()
-score[(rr_ < 235) | (rr_ > 300)] = np.nan
+score[(rr_ < 212) | (rr_ > 235)] = np.nan            # right at the lake's crusted edge (lake radius 200 m)
 r, c = best(score)
 lx, ly = float(X[r, c]), float(Y[r, c])
 out['lair'] = dict(x=lx, y=ly, z=float(h[r, c]), centre_x=cal['x'], centre_y=cal['y'], floor_z=float(h[r, c]),
