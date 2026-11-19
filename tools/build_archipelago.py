@@ -374,7 +374,8 @@ sun = spawn(unreal.DirectionalLight, (0, 0, 500000), (-15.0, 52.0, 0), 'Sun', 'A
 lc = sun.light_component
 for k, v in (('intensity', 9.0), ('light_color', unreal.Color(255, 226, 190, 255)), ('atmosphere_sun_light', True),
              ('cast_shadows', True), ('cast_cloud_shadows', True), ('enable_light_shaft_bloom', True), ('bloom_scale', 0.25),
-             ('dynamic_shadow_distance_movable_light', 60000.0), ('volumetric_scattering_intensity', 0.35)):   # 1.5 drew cream fog bands over sunlit slopes
+             ('dynamic_shadow_distance_movable_light', 60000.0), ('volumetric_scattering_intensity', 0.35),
+             ('specular_scale', 0.3)):   # grazing sun specular drew cream bands on sunlit ridges seen toward the sun   # 1.5 drew cream fog bands over sunlit slopes
     lc.set_editor_property(k, v)
 lc.set_mobility(unreal.ComponentMobility.MOVABLE)
 

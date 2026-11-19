@@ -259,7 +259,17 @@ private:
 		FVector AimAt = FVector::ZeroVector;
 		TArray<float> Shots;
 		FString Name;
+		TArray<FString> Commands, ResetCommands; // Cmd:/Reset: console commands ('~' = space, '|' separates)
 	};
+	// Frame timing per leg (review only): raw frame times, minus the frames around a screenshot and the first second
+	// after each teleport (streaming/settling), logged at the end of the leg.
+	TArray<float> LegFrameTimes;
+	int32 SkipFramesAfterShot = 0;
+	void LogLegFrameStats();
+	// Collision proof (review only): sweeps the dragon's own collision sphere, on its own channel and responses,
+	// through tagged landmarks and logs pass/fail.
+	void RunCollisionTests();
+	bool bCollisionTested = false;
 	TArray<FReviewLeg> ReviewLegs;
 	int32 ReviewLeg = -1;
 	int32 ReviewLegShot = 0;

@@ -51,7 +51,7 @@ world = unreal.get_editor_subsystem(unreal.UnrealEditorSubsystem).get_editor_wor
 if not world or world.get_path_name().split('.')[0] != LEVEL:
     levels.load_level(LEVEL)
 OWN_LABELS = re.compile(r'^(Stronghold_|Waterfall_|Glacier_|Lair_|Coast_)|^Review_\d+_(stronghold|stronghold_hall|waterfall|'
-                        r'rune_circle|ice_shrine|dragon_lair|(main|forest|glacier|ember)_(wreck|beacon|driftwood))$')
+                        r'rune_circle|ice_shrine|dragon_lair|diag_.*|(main|forest|glacier|ember)_(wreck|beacon|driftwood))$')
 removed = []
 for a in actors.get_all_level_actors():
     tags = [str(t) for t in a.get_editor_property('tags')]
@@ -155,19 +155,33 @@ drop = height(*along(t_lip)) - 0.0
 run = t_base - t_lip
 x, y = along(t_lip - 300)
 place('SM_FallsLip', x, y, height(x, y) - 320.0, wf['dir_deg'], 'Waterfall', 'Waterfall_Lip')
-# The sheet runs from the crest down the cliff face: base at the pool, leaning back toward the lip.
-def clears(tb):
-    for t in range(t_lip + 100, tb, 100):
-        if drop * (tb - t) / float(tb - t_lip) < height(*along(t)) + 150.0:
-            return False
-    return True
-t_sheet = next((tb for tb in range(t_base + 150, t_base + 6000, 100) if clears(tb)), t_base + 2000)
-run = t_sheet - t_lip
-length = math.hypot(drop, run)
-pitch = math.degrees(math.atan2(run, drop))
-x, y = along(t_sheet)
-place('SM_WaterfallSheet', x, y, -60.0, wf['dir_deg'], 'Waterfall', 'Waterfall_Sheet', pitch=pitch,
-      scale=(1.0, 1.6, length / 2415.0), collide=False)
+# The falls follow the cliff: the drop is cut into 5 straight sections, each from one point on the cliff face to
+# the next, held 3 m out from the rock so the translucent water never sinks into the bulging face. The top section
+# starts right at the crest (where the gorge stream tips over), the bottom one ends in the pool. Three layers,
+# offset sideways and outward, give the curtain some depth; mist at the foot.
+lip_floor = height(*along(t_lip - 100))
+pts = [(t_lip + 100, lip_floor + 30.0)]
+for k in range(1, 5):
+    zk = lip_floor * (1.0 - k / 5.0)
+    tk = next(t for t in range(t_lip, t_base + 3000, 50) if height(*along(t)) <= zk)
+    pts.append((tk + 300, zk))
+pts.append((t_base + 600, -60.0))
+for layer, (side, out, wy_) in enumerate(((0.0, 0.0, 1.6), (230.0, 130.0, 1.0), (-200.0, 220.0, 0.8))):
+    for k in range(len(pts) - 1):
+        (tt, zt), (tb, zb) = pts[k], pts[k + 1]
+        tt += out; tb += out
+        seg_len = math.hypot(tt - tb, zt - zb) + 200.0        # 2 m overlap hides the joints
+        seg_pitch = math.degrees(math.atan2(tb - tt, zt - zb))  # lean the top back toward the cliff
+        bx, by = along(tb)
+        bx -= uy * side; by += ux * side
+        place('SM_WaterfallSheet', bx, by, zb - 100.0, wf['dir_deg'], 'Waterfall', 'Waterfall_Sheet%d_%d' % (layer, k),
+              pitch=seg_pitch, scale=(1.0, wy_, seg_len / 2415.0), collide=False)
+t_sheet = pts[-1][0]
+length = sum(math.hypot(pts[k][0] - pts[k + 1][0], pts[k][1] - pts[k + 1][1]) for k in range(len(pts) - 1))
+pitch = math.degrees(math.atan2(pts[-1][0] - pts[0][0], pts[0][1] - pts[-1][1]))
+for k, (sc, dz) in enumerate(((1.7, 0.0), (1.1, 900.0))):
+    x, y = along(t_sheet + 100)
+    place('SM_WaterfallFoam', x, y, dz, wf['dir_deg'] + 40 * k, 'Waterfall', 'Waterfall_Mist%d' % k, scale=(sc, sc, sc), collide=False)
 # The stream: a sheet laid flat on the gorge floor for 40 m upstream of the lip (pitch 90 lays the sheet's long
 # axis back upstream, face up), so there is water at the crest that pours over it; foam where it tips over.
 fz = height(*along(t_lip - 200))
@@ -180,8 +194,8 @@ x, y = along(t_sheet + 500)
 place('SM_PlungeRocks', x, y, 0.0, wf['dir_deg'], 'Waterfall', 'Waterfall_PlungeRocks')
 x, y = along(t_sheet + 150)
 place('SM_WaterfallFoam', x, y, 0.0, wf['dir_deg'], 'Waterfall', 'Waterfall_Foam', collide=False)
-report.append('waterfall: crest %.0f m at t=%.0f m, cliff foot t=%.0f m, sheet foot t=%.0f m, %.0f m long leaning %.0f deg' % (
-    drop / 100.0, t_lip / 100.0, t_base / 100.0, t_sheet / 100.0, length / 100.0, pitch))
+report.append('waterfall: crest %.0f m at t=%.0f m, cliff foot t=%.0f m, 5 sections x 3 layers, %.0f m of falling water, overall lean %.0f deg' % (
+    drop / 100.0, t_lip / 100.0, t_base / 100.0, length / 100.0, pitch))
 
 # ---------------------------------------------------------------- glacier: rune circle, runestone path, ice shrine
 rc, sh = SITES['rune_circle'], SITES['ice_shrine']
@@ -270,7 +284,7 @@ def safe_alt(x, y, z):
     return max(z, height(x, y) + 6000.0)
 
 
-def leg(name, x, y, z, aim, dur=5.0, shots=(3.5,), speed=90):
+def leg(name, x, y, z, aim, dur=5.0, shots=(3.5,), speed=90, extra=()):
     global legs_n
     z = safe_alt(x, y, z)
     pitch = max(-40.0, min(10.0, math.degrees(math.atan2(aim[2] - z, math.hypot(aim[0] - x, aim[1] - y)))))
@@ -281,7 +295,7 @@ def leg(name, x, y, z, aim, dur=5.0, shots=(3.5,), speed=90):
     m.set_editor_property('tags', [unreal.Name(t) for t in (
         'DR_Landmark', 'ReviewLeg:%02d' % legs_n, 'Name:' + name.replace(' ', '_'), 'Dur:%.1f' % dur,
         'Shots:' + '|'.join('%.1f' % s for s in shots), 'Pitch:%.1f' % pitch, 'Speed:%d' % speed,
-        'AimAt:%.0f,%.0f,%.0f' % aim)])
+        'AimAt:%.0f,%.0f,%.0f' % aim) + tuple(extra)])
     placed.append(m)
     legs_n += 1
 
@@ -294,6 +308,22 @@ ex, ey = toward(cx, cy, g, 42000)
 leg('stronghold', ex, ey, hz + 16000, (cx, cy, hz + 800))
 ex, ey = toward(cx, cy, g + 140, 30000)
 leg('stronghold hall', ex, ey, hz + 9000, (cx, cy, hz + 600), speed=70)
+# Diagnosis of the cream bands on the forest ridges (they show only looking toward the low sun, as in the
+# 'stronghold' shot): the same view with one thing switched off per shot. '~' = space in the console commands.
+ex, ey = toward(cx, cy, g, 42000)
+leg('diag specular off', ex, ey, hz + 16000, (cx, cy, hz + 800), dur=4.0, shots=(3.0,),
+    extra=('Cmd:ShowFlag.Specular~0', 'Reset:ShowFlag.Specular~1'))   # proof shot: compare with the 'stronghold' shot
+# Lundvik: the dark spots on the water north of the pier, seen close up and from straight above.
+# Same view as 'forest village close' (placed by place_archipelago.py) later in the flight, then without shadows:
+# tells whether the dark spots move (ships), are shadows, or are fixed geometry.
+for act in actors.get_all_level_actors():
+    if 'Name:forest_village_close' in [str(t) for t in act.get_editor_property('tags')]:
+        tg = [str(t) for t in act.get_editor_property('tags')]
+        aim = next(t for t in tg if t.startswith('AimAt:')).split(':')[1].split(',')
+        lv = act.get_actor_location()
+        leg('diag lundvik again', lv.x, lv.y, lv.z, tuple(float(v) for v in aim), dur=5.0, shots=(3.5,), speed=40)
+        leg('diag lundvik no shadows', lv.x, lv.y, lv.z, tuple(float(v) for v in aim), dur=5.0, shots=(3.5,), speed=40,
+            extra=('Cmd:ShowFlag.DynamicShadows~0', 'Reset:ShowFlag.DynamicShadows~1'))
 wx, wy = along(t_sheet + 26000)
 mx, my = along((t_lip + t_base) / 2)
 leg('waterfall', wx + uy * 9000, wy - ux * 9000, drop * 0.85, (mx, my, drop * 0.55), speed=40)   # level with the crest: the whole fall in view

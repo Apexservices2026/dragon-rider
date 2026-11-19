@@ -26,6 +26,8 @@
 #include "Engine/StaticMeshActor.h"
 #include "Engine/ExponentialHeightFog.h"
 #include "Components/ExponentialHeightFogComponent.h"
+#include "Misc/App.h"
+#include "CollisionQueryParams.h"
 
 namespace
 {
@@ -441,6 +443,12 @@ bool ADragonFlightPawn::CollectReviewLegs()
 			else if (Key == TEXT("Name")) { Leg.Name = Value.Replace(TEXT("_"), TEXT(" ")); }
 			else if (Key == TEXT("Shots")) { for (const FString& P : Parts) { Leg.Shots.Add(FCString::Atof(*P)); } }
 			else if (Key == TEXT("Orbit") && Parts.Num() == 2) { Leg.bOrbit = true; Leg.OrbitYaw = FCString::Atof(*Parts[0]); Leg.OrbitPitch = FCString::Atof(*Parts[1]); }
+			else if (Key == TEXT("Cmd") || Key == TEXT("Reset"))
+			{
+				TArray<FString> Cmds;
+				Value.ParseIntoArray(Cmds, TEXT("|"));
+				for (FString& Cmd : Cmds) { Cmd.ReplaceInline(TEXT("~"), TEXT(" ")); (Key == TEXT("Cmd") ? Leg.Commands : Leg.ResetCommands).Add(Cmd); }
+			}
 			else if (Key == TEXT("FollowShip") && Parts.Num() == 3) { Leg.bFollowShip = true; Leg.FollowOffset = FVector(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2])); }
 			else if (Key == TEXT("AimAt") && Parts.Num() == 3) { Leg.bAimAt = true; Leg.AimAt = FVector(FCString::Atof(*Parts[0]), FCString::Atof(*Parts[1]), FCString::Atof(*Parts[2])); }
 		}
@@ -459,10 +467,23 @@ bool ADragonFlightPawn::CollectReviewLegs()
 
 void ADragonFlightPawn::StartReviewLeg(int32 Index)
 {
+	if (ReviewLegs.IsValidIndex(ReviewLeg))
+	{
+		LogLegFrameStats();
+		if (APlayerController* PC = Cast<APlayerController>(GetController()))
+		{
+			for (const FString& Cmd : ReviewLegs[ReviewLeg].ResetCommands) { PC->ConsoleCommand(Cmd); }
+		}
+	}
 	ReviewLeg = Index;
 	ReviewLegTime = 0.f;
 	ReviewLegShot = 0;
+	LegFrameTimes.Reset();
 	if (!ReviewLegs.IsValidIndex(Index)) { return; }
+	if (APlayerController* PC = Cast<APlayerController>(GetController()))
+	{
+		for (const FString& Cmd : ReviewLegs[Index].Commands) { PC->ConsoleCommand(Cmd); }
+	}
 	FReviewLeg& L = ReviewLegs[Index];
 	if (L.bFollowShip)
 	{
@@ -502,10 +523,22 @@ void ADragonFlightPawn::UpdateLegReview(float Dt)
 	ReviewTime += Dt;
 	AController* C = GetController();
 	if (!C) { return; }
-	if (ReviewLeg < 0) { StartReviewLeg(0); }
+	if (ReviewLeg < 0)
+	{
+		if (APlayerController* PC = Cast<APlayerController>(C))
+		{
+			// measure real frame times: no frame-rate cap or vsync during the review
+			PC->ConsoleCommand(TEXT("t.MaxFPS 0"));
+			PC->ConsoleCommand(TEXT("r.VSync 0"));
+		}
+		RunCollisionTests();
+		StartReviewLeg(0);
+	}
 	if (!ReviewLegs.IsValidIndex(ReviewLeg)) { return; }
 	const FReviewLeg& L = ReviewLegs[ReviewLeg];
 	ReviewLegTime += Dt;
+	if (SkipFramesAfterShot > 0) { --SkipFramesAfterShot; }
+	else if (ReviewLegTime > 1.f) { LegFrameTimes.Add(FApp::GetDeltaTime()); }
 
 	// Camera: optional fixed orbit around the dragon for beauty shots, otherwise the normal chase camera.
 	if (L.bOrbit)
@@ -539,7 +572,7 @@ void ADragonFlightPawn::UpdateLegReview(float Dt)
 	if (ReviewLegTime >= L.Duration)
 	{
 		if (ReviewLeg + 1 < ReviewLegs.Num()) { StartReviewLeg(ReviewLeg + 1); }
-		else if (APlayerController* PC = Cast<APlayerController>(C)) { PC->ConsoleCommand(TEXT("quit")); }
+		else if (APlayerController* PC = Cast<APlayerController>(C)) { LogLegFrameStats(); PC->ConsoleCommand(TEXT("quit")); }
 	}
 }
 
@@ -683,6 +716,7 @@ void ADragonFlightPawn::UpdateReviewMode(float Dt)
 void ADragonFlightPawn::ReviewScreenshot(const TCHAR* What)
 {
 	FScreenshotRequest::RequestScreenshot(FString::Printf(TEXT("DragonReview_%02d"), ReviewShot), true, false);
+	SkipFramesAfterShot = 4; // the capture frame and the next few hitch; keep them out of the timing
 	UE_LOG(LogTemp, Display, TEXT("DRAGON_REVIEW shot %d (%s) t=%.1f speed=%.0fkmh alt=%.1fm pitch=%.1f bank=%.1f dive=%.2f underwater=%d view=%.2f loc=%s"),
 		ReviewShot, What, ReviewTime, GetSpeedKmh(), GetAltitudeMeters(), FlightPitch, Bank, DiveAmount, bUnderwater ? 1 : 0, UnderwaterView,
 		*GetActorLocation().ToString());
@@ -1171,4 +1205,78 @@ void ADragonFlightPawn::UpdateUnderwaterView(float Dt)
 	WorldFog->SetDirectionalInscatteringColor(FMath::Lerp(SavedFogDirColor, FLinearColor(0.02f, 0.08f, 0.07f), U));
 	WorldFog->SetStartDistance(FMath::Lerp(SavedFogStart, 0.f, U));
 	WorldFog->SetFogMaxOpacity(FMath::Lerp(SavedFogMaxOpacity, 1.f, U));
+}
+
+void ADragonFlightPawn::LogLegFrameStats()
+{
+	if (!ReviewLegs.IsValidIndex(ReviewLeg) || LegFrameTimes.Num() < 5) { return; }
+	TArray<float> T = LegFrameTimes;
+	T.Sort();
+	double Sum = 0.0;
+	for (float V : T) { Sum += V; }
+	const float Avg = static_cast<float>(Sum / T.Num());
+	// 1% low = the average of the slowest 1% of frames (at least one frame)
+	const int32 NLow = FMath::Max(1, T.Num() / 100);
+	double LowSum = 0.0;
+	for (int32 i = T.Num() - NLow; i < T.Num(); ++i) { LowSum += T[i]; }
+	const float Low = static_cast<float>(LowSum / NLow);
+	UE_LOG(LogTemp, Display, TEXT("DRAGON_FPS leg %d (%s): %d frames, avg %.2f ms (%.0f fps), 1%% low %.2f ms (%.0f fps), worst %.2f ms"),
+		ReviewLeg, *ReviewLegs[ReviewLeg].Name, T.Num(), Avg * 1000.f, 1.f / Avg, Low * 1000.f, 1.f / Low, T.Last() * 1000.f);
+}
+
+void ADragonFlightPawn::RunCollisionTests()
+{
+	if (bCollisionTested) { return; }
+	bCollisionTested = true;
+	UWorld* W = GetWorld();
+	const FCollisionShape Shape = FCollisionShape::MakeSphere(Collision->GetScaledSphereRadius());
+	const ECollisionChannel Channel = Collision->GetCollisionObjectType();
+	FCollisionQueryParams Params(SCENE_QUERY_STAT(DragonCollisionTest), false, this);
+	FCollisionResponseParams Responses;
+	Collision->InitSweepCollisionParams(Params, Responses);
+	Params.AddIgnoredActor(this);
+
+	auto Find = [W](const TCHAR* Label) -> AActor*
+	{
+		for (TActorIterator<AActor> It(W); It; ++It)
+		{
+#if WITH_EDITOR
+			if (It->GetActorLabel() == Label) { return *It; }
+#endif
+		}
+		return nullptr;
+	};
+	// Sweep with the pawn's shape, channel and responses; a hit only counts if it is on that actor (so the ground
+	// around it doesn't decide the result). bExpectBlock: whether the dragon should be stopped.
+	auto Test = [&](const TCHAR* What, AActor* A, const FVector& LocalStart, const FVector& LocalEnd, bool bExpectBlock, float Radius = 0.f)
+	{
+		const FCollisionShape Sphere = Radius > 0.f ? FCollisionShape::MakeSphere(Radius) : Shape;
+		if (!A) { UE_LOG(LogTemp, Display, TEXT("DRAGON_COLLISION %s: FAIL (actor not found)"), What); return; }
+		const FTransform X = A->GetActorTransform();
+		const FVector Start = X.TransformPosition(LocalStart), End = X.TransformPosition(LocalEnd);
+		TArray<FHitResult> Hits;
+		W->SweepMultiByChannel(Hits, Start, End, FQuat::Identity, Channel, Sphere, Params, Responses);
+		const FHitResult* Hit = Hits.FindByPredicate([A](const FHitResult& H) { return H.GetActor() == A; });
+		const bool bBlocked = Hit != nullptr;
+		const FString Where = bBlocked ? FString::Printf(TEXT(" after %.1f m of the %.1f m sweep, touching local %s"), (Hit->Location - Start).Size() / 100.f,
+			(End - Start).Size() / 100.f, *X.InverseTransformPosition(Hit->ImpactPoint).ToString()) : FString();
+		UE_LOG(LogTemp, Display, TEXT("DRAGON_COLLISION %s: %s (%s%s, sphere radius %.0f cm, channel %d)"), What,
+			bBlocked == bExpectBlock ? TEXT("PASS") : TEXT("FAIL"), bBlocked ? TEXT("blocked") : TEXT("clear"), *Where,
+			Sphere.GetSphereRadius(), static_cast<int32>(Channel));
+	};
+	// Ice shrine: passage along local X, 7.2 m span, ~10.8 m tall: fly straight through the middle of the arch.
+	// The dragon's sphere is 6.6 m across and the arch only 7.2 m, so also sweep a 1 m probe to show the opening is open.
+	Test(TEXT("ice shrine arch opening, dragon-size sphere"), Find(TEXT("Glacier_IceShrine")), FVector(-1500, 0, 380), FVector(1500, 0, 380), false);
+	Test(TEXT("ice shrine arch opening, 1 m probe (expect clear)"), Find(TEXT("Glacier_IceShrine")), FVector(-1500, 0, 380), FVector(1500, 0, 380), false, 50.f);
+	// Mead hall: 52 x 18 m, fly sideways into the long wall at head height.
+	Test(TEXT("mead hall wall (expect blocked)"), Find(TEXT("Stronghold_MeadHall")), FVector(0, -2500, 500), FVector(0, 0, 500), true);
+	// Rune circle (R 9 m): drop straight down inside the ring beside the altar; then onto the altar; then through the stones.
+	{
+		AActor* RC = Find(TEXT("Glacier_RuneCircle"));
+		Test(TEXT("rune circle interior beside the altar, 1 m probe down to 0.6 m (expect clear)"), RC, FVector(450, 450, 3000), FVector(450, 450, 60), false, 50.f);
+		Test(TEXT("rune circle centre, down onto the altar (expect blocked by the altar)"), RC, FVector(0, 0, 3000), FVector(0, 0, -100), true);
+		Test(TEXT("rune circle, through the ring of stones at 2 m (expect blocked)"), RC, FVector(-1500, 0, 200), FVector(1500, 0, 200), true);
+	}
+	// Dragon ribs: 16 m spine + ribcage; fly across the middle.
+	Test(TEXT("dragon ribs (expect blocked)"), Find(TEXT("Lair_Ribs")), FVector(0, -1200, 250), FVector(0, 1200, 250), true);
 }

@@ -70,6 +70,10 @@ pkgs = []
 for a in actors.get_all_level_actors():
     if a.get_actor_label() == 'Sun':
         a.light_component.set_editor_property('volumetric_scattering_intensity', 0.35)
+        # The cream bands on sunlit ridges seen toward the low sun are the sun's specular highlight at grazing angles
+        # (they vanish with ShowFlag.Specular 0 and nothing else: not the albedo, fog, atmosphere, skylight or Lumen).
+        # Fresnel drives grazing specular toward 1 whatever the material's Specular, so tone the sun's specular down.
+        a.light_component.set_editor_property('specular_scale', 0.3)
         pkgs.append(a.get_package())
     elif a.get_actor_label() == 'Fog':
         a.component.set_editor_property('directional_inscattering_luminance', unreal.LinearColor(0.45, 0.32, 0.2, 1))
